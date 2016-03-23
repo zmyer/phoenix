@@ -297,7 +297,6 @@ public abstract class BaseResultIterators extends ExplainTable implements Result
                         if (whereCol.getSecond() == null) {
                             scan.addFamily(family);                            
                         } else {
-                            //TODO: samarth confirm this
                             scan.addColumn(family, whereCol.getSecond());
                         }
                     }
