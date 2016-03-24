@@ -950,4 +950,8 @@ public class SchemaUtil {
                 QueryConstants.EMPTY_COLUMN_VALUE_BYTES);
     }
     
+    public static boolean hasEncodedColumnName(PColumn column){
+        return !SchemaUtil.isPKColumn(column) && column.getColumnQualifier() != null;
+    }
+    
 }
