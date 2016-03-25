@@ -44,7 +44,6 @@ import javax.annotation.Nullable;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.io.encoding.DataBlockEncoding;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.Pair;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.expression.Expression;
@@ -61,7 +60,6 @@ import org.apache.phoenix.schema.PColumnFamily;
 import org.apache.phoenix.schema.PDatum;
 import org.apache.phoenix.schema.PName;
 import org.apache.phoenix.schema.PTable;
-import org.apache.phoenix.schema.PTable.StorageScheme;
 import org.apache.phoenix.schema.RowKeySchema;
 import org.apache.phoenix.schema.RowKeySchema.RowKeySchemaBuilder;
 import org.apache.phoenix.schema.SaltingUtil;
@@ -69,7 +67,6 @@ import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TableProperty;
 import org.apache.phoenix.schema.ValueSchema.Field;
 import org.apache.phoenix.schema.types.PDataType;
-import org.apache.phoenix.schema.types.PInteger;
 import org.apache.phoenix.schema.types.PVarbinary;
 import org.apache.phoenix.schema.types.PVarchar;
 
@@ -146,7 +143,7 @@ public class SchemaUtil {
     			rowSize += KeyValue.getKeyValueDataStructureSize(keyLength, column.getFamilyName().getBytes().length, column.getName().getBytes().length, valueLength);
     		}
     	}
-    	byte[] emptyKeyValueKV = SchemaUtil.getEmptyKeyValueInfo(table).getFirst();
+    	byte[] emptyKeyValueKV = EncodedColumnsUtil.getEmptyKeyValueInfo(table).getFirst();
     	// Empty key value
     	rowSize += KeyValue.getKeyValueDataStructureSize(keyLength, getEmptyColumnFamily(table).length, emptyKeyValueKV.length, 0);
     	return rowSize;
@@ -906,52 +903,22 @@ public class SchemaUtil {
     /**
      * Return a map of column family -> next column qualifier number to use.
      */
-    public static Map<String, Integer> getNextColumnQualifiers(PTable table) {
-        Map<String, Integer> map = Maps.newHashMapWithExpectedSize(table.getColumns().size());
-        for (PColumnFamily f : table.getColumnFamilies()) {
-            final int size = f.getColumns().size();
-            // column qualifiers start with 1.
-            map.put(f.getName().getString(), size + 1);
+    public static Map<String, Integer> getNextEncodedColumnQualifiers(PTable table) {
+        if (EncodedColumnsUtil.usesEncodedColumnNames(table)) {
+            Map<String, Integer> map = Maps.newHashMapWithExpectedSize(table.getColumns().size());
+            int max = 0; 
+            for (PColumnFamily f : table.getColumnFamilies()) {
+                for (PColumn column : f.getColumns()) {
+                    if (column.getEncodedColumnQualifier() > max) {
+                        max = column.getEncodedColumnQualifier();
+                    }
+                }
+                // column qualifiers start with 1.
+                map.put(f.getName().getString(), max + 1);
+            }
+            return map;
         }
-        return map;
-    }
-    
-    public static boolean usesEncodedColumnNames(PTable table) {
-        return table.getStorageScheme() != null && table.getStorageScheme() == StorageScheme.ENCODED_COLUMN_NAMES;
-    }
-    
-    public static byte[] getColumnQualifier(PColumn column, PTable table) {
-      checkArgument(!SchemaUtil.isPKColumn(column), "No column qualifiers for PK columns");
-      return usesEncodedColumnNames(table) ? PInteger.INSTANCE.toBytes(column.getColumnQualifier()) : column.getName().getBytes();
-    }
-    
-    public static byte[] getColumnQualifier(PColumn column, boolean encodedColumnName) {
-        checkArgument(!SchemaUtil.isPKColumn(column), "No column qualifiers for PK columns");
-        return encodedColumnName ? PInteger.INSTANCE.toBytes(column.getColumnQualifier()) : column.getName().getBytes(); 
-    }
-    
-    /**
-     * @return pair of byte arrays. The first part of the pair is the empty key value's column qualifier, and the second
-     *         part is the value to use for it.
-     */
-    public static Pair<byte[], byte[]> getEmptyKeyValueInfo(PTable table) {
-        return usesEncodedColumnNames(table) ? new Pair<>(QueryConstants.ENCODED_EMPTY_COLUMN_BYTES,
-                QueryConstants.ENCODED_EMPTY_COLUMN_VALUE_BYTES) : new Pair<>(QueryConstants.EMPTY_COLUMN_BYTES,
-                QueryConstants.EMPTY_COLUMN_VALUE_BYTES);
-    }
-    
-    /**
-     * @return pair of byte arrays. The first part of the pair is the empty key value's column qualifier, and the second
-     *         part is the value to use for it.
-     */
-    public static Pair<byte[], byte[]> getEmptyKeyValueInfo(boolean usesEncodedColumnNames) {
-        return usesEncodedColumnNames ? new Pair<>(QueryConstants.ENCODED_EMPTY_COLUMN_BYTES,
-                QueryConstants.ENCODED_EMPTY_COLUMN_VALUE_BYTES) : new Pair<>(QueryConstants.EMPTY_COLUMN_BYTES,
-                QueryConstants.EMPTY_COLUMN_VALUE_BYTES);
-    }
-    
-    public static boolean hasEncodedColumnName(PColumn column){
-        return !SchemaUtil.isPKColumn(column) && column.getColumnQualifier() != null;
+        return null;
     }
     
 }

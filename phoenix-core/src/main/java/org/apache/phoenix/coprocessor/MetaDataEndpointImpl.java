@@ -186,6 +186,7 @@ import org.apache.phoenix.schema.types.PVarbinary;
 import org.apache.phoenix.schema.types.PVarchar;
 import org.apache.phoenix.trace.util.Tracing;
 import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.EncodedColumnsUtil;
 import org.apache.phoenix.util.EnvironmentEdgeManager;
 import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.KeyValueUtil;
@@ -2659,7 +2660,7 @@ public class MetaDataEndpointImpl extends MetaDataProtocol implements Coprocesso
                                             byte[] indexKey =
                                                     SchemaUtil.getTableKey(tenantId, index
                                                             .getSchemaName().getBytes(), index.getTableName().getBytes());
-                                            byte[] cq = SchemaUtil.getColumnQualifier(columnToDelete, index);
+                                            byte[] cq = EncodedColumnsUtil.getColumnQualifier(columnToDelete, index);
                                             // If index requires this column for its pk, then drop it
                                             if (indexColumns.contains(new ColumnReference(columnToDelete.getFamilyName().getBytes(), cq))) {
                                                 // Since we're dropping the index, lock it to ensure
@@ -2876,7 +2877,7 @@ public class MetaDataEndpointImpl extends MetaDataProtocol implements Coprocesso
                         Put p = new Put(dataTableKey);
                         // Decide on what column qualifier to use for empty key value.
                         PTable currentTable = doGetTable(key, HConstants.LATEST_TIMESTAMP, rowLock);
-                        Pair<byte[], byte[]> emptyKeyValuePair = SchemaUtil.getEmptyKeyValueInfo(currentTable);
+                        Pair<byte[], byte[]> emptyKeyValuePair = EncodedColumnsUtil.getEmptyKeyValueInfo(currentTable);
                         p.add(TABLE_FAMILY_BYTES, emptyKeyValuePair.getFirst(), timeStamp, emptyKeyValuePair.getSecond());
                         tableMetadata.add(p);
                     }
