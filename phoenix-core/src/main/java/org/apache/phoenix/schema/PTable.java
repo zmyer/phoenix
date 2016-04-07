@@ -18,6 +18,7 @@
 package org.apache.phoenix.schema;
 
 import java.util.List;
+import java.util.Map;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -130,7 +131,7 @@ public interface PTable extends PMetaDataEntity {
          * Link from a view to its parent table
          */
         PARENT_TABLE((byte)3);
-
+        
         private final byte[] byteValue;
         private final byte serializedValue;
 
@@ -379,4 +380,5 @@ public interface PTable extends PMetaDataEntity {
     int getRowTimestampColPos();
     long getUpdateCacheFrequency();
     StorageScheme getStorageScheme();
+    Map<String, Integer> getEncodedCQCounters();
 }
