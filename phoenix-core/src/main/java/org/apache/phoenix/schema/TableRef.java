@@ -21,6 +21,7 @@ import java.util.Objects;
 
 import org.apache.phoenix.compile.TupleProjectionCompiler;
 import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.schema.PTable.IndexType;
 import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.SchemaUtil;
 
@@ -34,6 +35,7 @@ public class TableRef {
     private final String alias;
     private final long lowerBoundTimeStamp;
     private final boolean hasDynamicCols;
+    private final long currentTime;
 
     public TableRef(TableRef tableRef) {
         this(tableRef.alias, tableRef.table, tableRef.upperBoundTimeStamp, tableRef.lowerBoundTimeStamp, tableRef.hasDynamicCols);
@@ -63,7 +65,9 @@ public class TableRef {
         boolean hasDynamicCols) {
         this.alias = alias;
         this.table = table;
-        this.upperBoundTimeStamp = upperBoundTimeStamp;
+        this.currentTime = upperBoundTimeStamp;
+        // if UPDATE_CACHE_FREQUENCY is set, always let the server set timestamps
+        this.upperBoundTimeStamp = table.getUpdateCacheFrequency()!=0 ? QueryConstants.UNSET_TIMESTAMP : upperBoundTimeStamp;
         this.lowerBoundTimeStamp = lowerBoundTimeStamp;
         this.hasDynamicCols = hasDynamicCols;
     }
@@ -101,7 +105,7 @@ public class TableRef {
             String defaultFamilyName = table.getDefaultFamilyName() == null ? QueryConstants.DEFAULT_COLUMN_FAMILY : table.getDefaultFamilyName().getString();
             // Translate to the data table column name
             String dataFamilyName = isIndex ? IndexUtil.getDataColumnFamilyName(name) : column.getFamilyName().getString() ;
-            cf = defaultFamilyName.equals(dataFamilyName) ? null : dataFamilyName;
+            cf = (table.getIndexType()==IndexType.LOCAL? IndexUtil.getActualColumnFamilyName(defaultFamilyName):defaultFamilyName).equals(dataFamilyName) ? null : dataFamilyName;
             cq = isIndex ? IndexUtil.getDataColumnName(name) : name;
         }
         
@@ -139,6 +143,10 @@ public class TableRef {
 
     public boolean hasDynamicCols() {
         return hasDynamicCols;
+    }
+    
+    public long getCurrentTime() {
+        return this.currentTime;
     }
 
 }

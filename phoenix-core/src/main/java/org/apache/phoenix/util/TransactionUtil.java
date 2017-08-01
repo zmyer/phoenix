@@ -19,11 +19,9 @@ package org.apache.phoenix.util;
 
 import java.sql.SQLException;
 
-import co.cask.tephra.TransactionConflictException;
-import co.cask.tephra.TransactionFailureException;
-import co.cask.tephra.TxConstants;
-import co.cask.tephra.hbase11.TransactionAwareHTable;
-
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.phoenix.coprocessor.MetaDataProtocol.MetaDataMutationResult;
 import org.apache.phoenix.exception.SQLExceptionCode;
@@ -31,36 +29,29 @@ import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.execute.MutationState;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.transaction.PhoenixTransactionContext;
+import org.apache.phoenix.transaction.PhoenixTransactionalTable;
+import org.apache.phoenix.transaction.TephraTransactionTable;
+import org.apache.phoenix.transaction.TransactionFactory;
 
 public class TransactionUtil {
     private TransactionUtil() {
     }
     
+    public static boolean isDelete(Cell cell) {
+        return (CellUtil.matchingValue(cell, HConstants.EMPTY_BYTE_ARRAY));
+    }
+    
     public static long convertToNanoseconds(long serverTimeStamp) {
-        return serverTimeStamp * TxConstants.MAX_TX_PER_MS;
+        return serverTimeStamp * TransactionFactory.getTransactionFactory().getTransactionContext().getMaxTransactionsPerSecond();
     }
     
     public static long convertToMilliseconds(long serverTimeStamp) {
-        return serverTimeStamp / TxConstants.MAX_TX_PER_MS;
+        return serverTimeStamp / TransactionFactory.getTransactionFactory().getTransactionContext().getMaxTransactionsPerSecond();
     }
     
-    public static SQLException getTransactionFailureException(TransactionFailureException e) {
-        if (e instanceof TransactionConflictException) { 
-            return new SQLExceptionInfo.Builder(SQLExceptionCode.TRANSACTION_CONFLICT_EXCEPTION)
-                .setMessage(e.getMessage())
-                .setRootCause(e)
-                .build().buildException();
-
-        }
-        return new SQLExceptionInfo.Builder(SQLExceptionCode.TRANSACTION_FAILED)
-            .setMessage(e.getMessage())
-            .setRootCause(e)
-            .build().buildException();
-    }
-    
-    public static TransactionAwareHTable getTransactionAwareHTable(HTableInterface htable, PTable table) {
-    	// Conflict detection is not needed for tables with write-once/append-only data
-    	return new TransactionAwareHTable(htable, table.isImmutableRows() ? TxConstants.ConflictDetection.NONE : TxConstants.ConflictDetection.ROW);
+    public static PhoenixTransactionalTable getPhoenixTransactionTable(PhoenixTransactionContext phoenixTransactionContext, HTableInterface htable, PTable pTable) {
+        return new TephraTransactionTable(phoenixTransactionContext, htable, pTable);
     }
     
     // we resolve transactional tables at the txn read pointer

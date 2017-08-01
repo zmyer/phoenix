@@ -32,14 +32,14 @@ import org.apache.phoenix.util.PropertiesUtil;
 import org.junit.Test;
 
 
-public class ReadOnlyIT extends BaseHBaseManagedTimeTableReuseIT {
+public class ReadOnlyIT extends ParallelStatsDisabledIT {
 
     @Test
     public void testConnectionReadOnly() throws Exception {
         
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
-      String testTable = generateRandomString();
+      String testTable = generateUniqueName();
       String ddl = "CREATE TABLE " + testTable + " " +
                         "  (r varchar not null, col1 integer" +
                         "  CONSTRAINT pk PRIMARY KEY (r))\n"; 

@@ -32,7 +32,6 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Map;
 
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.hadoop.hbase.client.HTableInterface;
@@ -41,97 +40,161 @@ import org.apache.phoenix.coprocessor.PhoenixTransactionalProcessor;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.query.QueryConstants;
-import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.PName;
 import org.apache.phoenix.schema.PNameFactory;
+import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.schema.PTableType;
-import org.apache.phoenix.util.ReadOnlyProps;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-import com.google.common.collect.Maps;
-
 @RunWith(Parameterized.class)
-public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
+public class AlterTableWithViewsIT extends ParallelStatsDisabledIT {
     
     private final boolean isMultiTenant;
+    private final boolean columnEncoded;
     
     private final String TENANT_SPECIFIC_URL1 = getUrl() + ';' + TENANT_ID_ATTRIB + "=tenant1";
     private final String TENANT_SPECIFIC_URL2 = getUrl() + ';' + TENANT_ID_ATTRIB + "=tenant2";
     
-    public AlterTableWithViewsIT(boolean isMultiTenant) {
+    public AlterTableWithViewsIT(boolean isMultiTenant, boolean columnEncoded) {
         this.isMultiTenant = isMultiTenant;
+        this.columnEncoded = columnEncoded;
     }
     
-    @Parameters(name="multiTenant = {0}")
-    public static Collection<Boolean> data() {
-        return Arrays.asList(false, true);
+    @Parameters(name="AlterTableWithViewsIT_multiTenant={0}, columnEncoded={1}") // name is used by failsafe as file name in reports
+    public static Collection<Boolean[]> data() {
+        return Arrays.asList(new Boolean[][] { 
+                { false, false }, { false, true },
+                { true, false }, { true, true } });
     }
-	
-	@BeforeClass
-    @Shadower(classBeingShadowed = BaseHBaseManagedTimeIT.class)
-    public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(1);
-        props.put(QueryServices.TRANSACTIONS_ENABLED, Boolean.toString(true));
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
-    }
-	
+    
     private String generateDDL(String format) {
+        return generateDDL("", format);
+    }
+    
+    private String generateDDL(String options, String format) {
+        StringBuilder optionsBuilder = new StringBuilder(options);
+        if (!columnEncoded) {
+            if (optionsBuilder.length()!=0)
+                optionsBuilder.append(",");
+            optionsBuilder.append("COLUMN_ENCODED_BYTES=0");
+        }
+        if (isMultiTenant) {
+            if (optionsBuilder.length()!=0)
+                optionsBuilder.append(",");
+            optionsBuilder.append("MULTI_TENANT=true");
+        }
         return String.format(format, isMultiTenant ? "TENANT_ID VARCHAR NOT NULL, " : "",
-            isMultiTenant ? "TENANT_ID, " : "", isMultiTenant ? "MULTI_TENANT=true" : "");
+            isMultiTenant ? "TENANT_ID, " : "", optionsBuilder.toString());
     }
     
     @Test
     public void testAddNewColumnsToBaseTableWithViews() throws Exception {
         try (Connection conn = DriverManager.getConnection(getUrl());
                 Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {       
-            String ddlFormat = "CREATE TABLE IF NOT EXISTS TABLEWITHVIEW ("
+            String tableName = generateUniqueName();
+            String viewOfTable = tableName + "_VIEW";
+            String ddlFormat = "CREATE TABLE IF NOT EXISTS " + tableName + " ("
                             + " %s ID char(1) NOT NULL,"
                             + " COL1 integer NOT NULL,"
                             + " COL2 bigint NOT NULL,"
                             + " CONSTRAINT NAME_PK PRIMARY KEY (%s ID, COL1, COL2)"
                             + " ) %s";
             conn.createStatement().execute(generateDDL(ddlFormat));
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
             
-            viewConn.createStatement().execute("CREATE VIEW VIEWOFTABLE ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR ) AS SELECT * FROM TABLEWITHVIEW");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR ) AS SELECT * FROM " + tableName);
+            assertTableDefinition(conn, viewOfTable, PTableType.VIEW, tableName, 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
             
             // adding a new pk column and a new regular column
-            conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD COL3 varchar(10) PRIMARY KEY, COL4 integer");
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 1, 5, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "COL3", "COL4");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 1, 7, 5, "ID", "COL1", "COL2", "COL3", "COL4", "VIEW_COL1", "VIEW_COL2");
+            conn.createStatement().execute("ALTER TABLE " + tableName + " ADD COL3 varchar(10) PRIMARY KEY, COL4 integer");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, columnEncoded ? 2 : 1, 5, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "COL3", "COL4");
+            assertTableDefinition(conn, viewOfTable, PTableType.VIEW, tableName, 1, 7, 5, "ID", "COL1", "COL2", "COL3", "COL4", "VIEW_COL1", "VIEW_COL2");
+        } 
+    }
+    
+    @Test
+    public void testAlterPropertiesOfParentTable() throws Exception {
+        try (Connection conn = DriverManager.getConnection(getUrl());
+                Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {       
+            String tableName = generateUniqueName();
+            String viewOfTable1 = tableName + "_VIEW1";
+            String viewOfTable2 = tableName + "_VIEW2";
+            String ddlFormat = "CREATE TABLE IF NOT EXISTS " + tableName + " ("
+                            + " %s ID char(1) NOT NULL,"
+                            + " COL1 integer NOT NULL,"
+                            + " COL2 bigint NOT NULL,"
+                            + " CONSTRAINT NAME_PK PRIMARY KEY (%s ID, COL1, COL2)"
+                            + " ) %s ";
+            conn.createStatement().execute(generateDDL("UPDATE_CACHE_FREQUENCY=2", ddlFormat));
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable1 + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR ) AS SELECT * FROM " + tableName);
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable2 + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR ) AS SELECT * FROM " + tableName);
+            viewConn.createStatement().execute("ALTER VIEW " + viewOfTable2 + " SET UPDATE_CACHE_FREQUENCY = 1");
+            
+            PhoenixConnection phoenixConn = conn.unwrap(PhoenixConnection.class);
+            PTable table = phoenixConn.getTable(new PTableKey(null, tableName));
+            PName tenantId = isMultiTenant ? PNameFactory.newName("tenant1") : null;
+            assertFalse(table.isImmutableRows());
+            assertEquals(2, table.getUpdateCacheFrequency());
+            PTable viewTable1 = viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable1));
+            assertFalse(viewTable1.isImmutableRows());
+            assertEquals(2, viewTable1.getUpdateCacheFrequency());
+            // query the view to force the table cache to be updated
+            viewConn.createStatement().execute("SELECT * FROM "+viewOfTable2);
+            PTable viewTable2 = viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable2));
+            assertFalse(viewTable2.isImmutableRows());
+            assertEquals(1, viewTable2.getUpdateCacheFrequency());
+            
+            conn.createStatement().execute("ALTER TABLE " + tableName + " SET IMMUTABLE_ROWS=true, UPDATE_CACHE_FREQUENCY=3");
+            // query the views to force the table cache to be updated
+            viewConn.createStatement().execute("SELECT * FROM "+viewOfTable1);
+            viewConn.createStatement().execute("SELECT * FROM "+viewOfTable2);
+            
+            phoenixConn = conn.unwrap(PhoenixConnection.class);
+            table = phoenixConn.getTable(new PTableKey(null, tableName));
+            assertTrue(table.isImmutableRows());
+            assertEquals(3, table.getUpdateCacheFrequency());
+            
+            viewTable1 = viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable1));
+            assertTrue(viewTable1.isImmutableRows());
+            assertEquals(3, viewTable1.getUpdateCacheFrequency());
+            
+            viewTable2 = viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable2));
+            assertTrue(viewTable2.isImmutableRows());
+            // update cache frequency is not propagated to the view since it was altered on the view
+            assertEquals(1, viewTable2.getUpdateCacheFrequency());
         } 
     }
     
     @Test
     public void testDropColumnsFromBaseTableWithView() throws Exception {
         try (Connection conn = DriverManager.getConnection(getUrl());
-                Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) { 
-            String ddlFormat = "CREATE TABLE IF NOT EXISTS TABLEWITHVIEW (" + " %s ID char(1) NOT NULL,"
+                Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {
+            String tableName = generateUniqueName();
+            String viewOfTable = tableName + "_VIEW";
+            String ddlFormat = "CREATE TABLE IF NOT EXISTS " + tableName + " (" + " %s ID char(1) NOT NULL,"
                             + " COL1 integer NOT NULL," + " COL2 bigint NOT NULL,"
                             + " COL3 varchar(10)," + " COL4 varchar(10)," + " COL5 varchar(10),"
                             + " CONSTRAINT NAME_PK PRIMARY KEY (%s ID, COL1, COL2)" + " ) %s";
             conn.createStatement().execute(generateDDL(ddlFormat));
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 0, 6,
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, 0, 6,
                 QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "COL3", "COL4",
                 "COL5");
 
             viewConn.createStatement()
                     .execute(
-                        "CREATE VIEW VIEWOFTABLE ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR ) AS SELECT * FROM TABLEWITHVIEW");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 0, 8, 6,
+                        "CREATE VIEW " + viewOfTable + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR ) AS SELECT * FROM " + tableName);
+            assertTableDefinition(conn, viewOfTable, PTableType.VIEW, tableName, 0, 8, 6,
                 "ID", "COL1", "COL2", "COL3", "COL4", "COL5", "VIEW_COL1", "VIEW_COL2");
 
             // drop two columns from the base table
-            conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW DROP COLUMN COL3, COL5");
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 1, 4,
+            conn.createStatement().execute("ALTER TABLE " + tableName + " DROP COLUMN COL3, COL5");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, columnEncoded ? 2 : 1, 4,
                 QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "COL4");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 1, 6, 4,
+            assertTableDefinition(conn, viewOfTable, PTableType.VIEW, tableName, 1, 6, 4,
                 "ID", "COL1", "COL2", "COL4", "VIEW_COL1", "VIEW_COL2");
         }
     }
@@ -142,20 +205,23 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
                 Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {
             conn.setAutoCommit(false);
             viewConn.setAutoCommit(false);
-            String ddlFormat = "CREATE TABLE IF NOT EXISTS TABLEWITHVIEW ("
+            String tableName = generateUniqueName();
+            String viewOfTable = tableName + "_VIEW";
+
+            String ddlFormat = "CREATE TABLE IF NOT EXISTS " + tableName + " ("
                             + " %s ID char(10) NOT NULL,"
                             + " COL1 integer NOT NULL,"
                             + " COL2 bigint NOT NULL,"
                             + " CONSTRAINT NAME_PK PRIMARY KEY (%s ID, COL1, COL2)"
                             + " ) %s";
             conn.createStatement().execute(generateDDL(ddlFormat));
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
             
-            viewConn.createStatement().execute("CREATE VIEW VIEWOFTABLE ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256), VIEW_COL3 VARCHAR, VIEW_COL4 DECIMAL, VIEW_COL5 DECIMAL(10,2), VIEW_COL6 VARCHAR, CONSTRAINT pk PRIMARY KEY (VIEW_COL5, VIEW_COL6) ) AS SELECT * FROM TABLEWITHVIEW");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 0, 9, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2", "VIEW_COL3", "VIEW_COL4", "VIEW_COL5", "VIEW_COL6");
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256), VIEW_COL3 VARCHAR, VIEW_COL4 DECIMAL, VIEW_COL5 DECIMAL(10,2), VIEW_COL6 VARCHAR, CONSTRAINT pk PRIMARY KEY (VIEW_COL5, VIEW_COL6) ) AS SELECT * FROM " + tableName);
+            assertTableDefinition(conn,viewOfTable, PTableType.VIEW, tableName, 0, 9, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2", "VIEW_COL3", "VIEW_COL4", "VIEW_COL5", "VIEW_COL6");
             
             // upsert single row into view
-            String dml = "UPSERT INTO VIEWOFTABLE VALUES(?,?,?,?,?, ?, ?, ?, ?)";
+            String dml = "UPSERT INTO " + viewOfTable + " VALUES(?,?,?,?,?, ?, ?, ?, ?)";
             PreparedStatement stmt = viewConn.prepareStatement(dml);
             stmt.setString(1, "view1");
             stmt.setInt(2, 12);
@@ -171,7 +237,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there is already a view column with same name of different type
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 char(10)");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 char(10)");
                 fail();
             }
             catch (SQLException e) {
@@ -180,7 +246,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there is already a view column with same name with different scale
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(10,1)");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(10,1)");
                 fail();
             }
             catch (SQLException e) {
@@ -189,7 +255,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there is already a view column with same name with different length
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(9,2)");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(9,2)");
                 fail();
             }
             catch (SQLException e) {
@@ -198,45 +264,56 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there is already a view column with different length
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL2 VARCHAR");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL2 VARCHAR");
                 fail();
             }
             catch (SQLException e) {
                 assertEquals("Unexpected exception", CANNOT_MUTATE_TABLE.getErrorCode(), e.getErrorCode());
             }
             
-            // validate that there were no columns added to the table or view
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 0, 9, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2", "VIEW_COL3", "VIEW_COL4", "VIEW_COL5", "VIEW_COL6");
+            // validate that there were no columns added to the table or view, if its table is column encoded the sequence number changes when we increment the cq counter
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, columnEncoded ? 1 : 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
+            assertTableDefinition(conn, viewOfTable, PTableType.VIEW, tableName, 0, 9, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2", "VIEW_COL3", "VIEW_COL4", "VIEW_COL5", "VIEW_COL6");
             
-            // should succeed 
-            conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL4 DECIMAL, VIEW_COL2 VARCHAR(256)");
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 1, 5, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "VIEW_COL4", "VIEW_COL2");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 1, 9, 5, "ID", "COL1", "COL2", "VIEW_COL4", "VIEW_COL2", "VIEW_COL1", "VIEW_COL3", "VIEW_COL5", "VIEW_COL6");
+            if (columnEncoded) {
+                try {
+                    // adding a key value column to the base table that already exists in the view is not allowed
+                    conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL4 DECIMAL, VIEW_COL2 VARCHAR(256)");
+                    fail();
+                } catch (SQLException e) {
+                    assertEquals("Unexpected exception", CANNOT_MUTATE_TABLE.getErrorCode(), e.getErrorCode());
+                }
+            }
+            else {
+                // should succeed 
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL4 DECIMAL, VIEW_COL2 VARCHAR(256)");
+                assertTableDefinition(conn, tableName, PTableType.TABLE, null, columnEncoded ? 2 : 1, 5, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "VIEW_COL4", "VIEW_COL2");
+                assertTableDefinition(conn, viewOfTable, PTableType.VIEW, tableName, 1, 9, 5, "ID", "COL1", "COL2", "VIEW_COL4", "VIEW_COL2", "VIEW_COL1", "VIEW_COL3", "VIEW_COL5", "VIEW_COL6");
             
-            // query table
-            ResultSet rs = stmt.executeQuery("SELECT * FROM TABLEWITHVIEW");
-            assertTrue(rs.next());
-            assertEquals("view1", rs.getString("ID"));
-            assertEquals(12, rs.getInt("COL1"));
-            assertEquals(13, rs.getInt("COL2"));
-            assertEquals("view5", rs.getString("VIEW_COL2"));
-            assertEquals(17, rs.getInt("VIEW_COL4"));
-            assertFalse(rs.next());
-
-            // query view
-            rs = stmt.executeQuery("SELECT * FROM VIEWOFTABLE");
-            assertTrue(rs.next());
-            assertEquals("view1", rs.getString("ID"));
-            assertEquals(12, rs.getInt("COL1"));
-            assertEquals(13, rs.getInt("COL2"));
-            assertEquals(14, rs.getInt("VIEW_COL1"));
-            assertEquals("view5", rs.getString("VIEW_COL2"));
-            assertEquals("view6", rs.getString("VIEW_COL3"));
-            assertEquals(17, rs.getInt("VIEW_COL4"));
-            assertEquals(18, rs.getInt("VIEW_COL5"));
-            assertEquals("view9", rs.getString("VIEW_COL6"));
-            assertFalse(rs.next());
+                // query table
+                ResultSet rs = stmt.executeQuery("SELECT * FROM " + tableName);
+                assertTrue(rs.next());
+                assertEquals("view1", rs.getString("ID"));
+                assertEquals(12, rs.getInt("COL1"));
+                assertEquals(13, rs.getInt("COL2"));
+                assertEquals("view5", rs.getString("VIEW_COL2"));
+                assertEquals(17, rs.getInt("VIEW_COL4"));
+                assertFalse(rs.next());
+    
+                // query view
+                rs = stmt.executeQuery("SELECT * FROM " + viewOfTable);
+                assertTrue(rs.next());
+                assertEquals("view1", rs.getString("ID"));
+                assertEquals(12, rs.getInt("COL1"));
+                assertEquals(13, rs.getInt("COL2"));
+                assertEquals(14, rs.getInt("VIEW_COL1"));
+                assertEquals("view5", rs.getString("VIEW_COL2"));
+                assertEquals("view6", rs.getString("VIEW_COL3"));
+                assertEquals(17, rs.getInt("VIEW_COL4"));
+                assertEquals(18, rs.getInt("VIEW_COL5"));
+                assertEquals("view9", rs.getString("VIEW_COL6"));
+                assertFalse(rs.next());
+            }
         } 
     }
     
@@ -246,20 +323,23 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
                 Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {      
             conn.setAutoCommit(false);
             viewConn.setAutoCommit(false);
-            String ddlFormat = "CREATE TABLE IF NOT EXISTS TABLEWITHVIEW ("
+            String tableName = generateUniqueName();
+            String viewOfTable = tableName + "_VIEW";
+
+            String ddlFormat = "CREATE TABLE IF NOT EXISTS " + tableName + " ("
                             + " %s ID char(10) NOT NULL,"
                             + " COL1 integer NOT NULL,"
                             + " COL2 integer NOT NULL,"
                             + " CONSTRAINT NAME_PK PRIMARY KEY (%s ID, COL1, COL2)"
                             + " ) %s";
             conn.createStatement().execute(generateDDL(ddlFormat));
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
             
-            viewConn.createStatement().execute("CREATE VIEW VIEWOFTABLE ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) CONSTRAINT pk PRIMARY KEY (VIEW_COL1, VIEW_COL2)) AS SELECT * FROM TABLEWITHVIEW");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) CONSTRAINT pk PRIMARY KEY (VIEW_COL1, VIEW_COL2)) AS SELECT * FROM " + tableName);
+            assertTableDefinition(conn, viewOfTable, PTableType.VIEW, tableName, 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
             
             // upsert single row into view
-            String dml = "UPSERT INTO VIEWOFTABLE VALUES(?,?,?,?,?)";
+            String dml = "UPSERT INTO " + viewOfTable + " VALUES(?,?,?,?,?)";
             PreparedStatement stmt = viewConn.prepareStatement(dml);
             stmt.setString(1, "view1");
             stmt.setInt(2, 12);
@@ -271,7 +351,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there we have to add both VIEW_COL1 and VIEW_COL2 to the pk
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL2 VARCHAR(256) PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL2 VARCHAR(256) PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -280,7 +360,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there we have to add both VIEW_COL1 and VIEW_COL2  to the pk 
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -289,7 +369,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there we have to add both VIEW_COL1 and VIEW_COL2 to the pk
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -298,7 +378,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there we have to add both VIEW_COL1 and VIEW_COL2  to the pk 
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY, VIEW_COL2 VARCHAR(256)");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY, VIEW_COL2 VARCHAR(256)");
                 fail();
             }
             catch (SQLException e) {
@@ -307,7 +387,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there we have to add both VIEW_COL1 and VIEW_COL2 to the pk in the right order
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL2 VARCHAR(256) PRIMARY KEY, VIEW_COL1 DECIMAL(10,2) PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + "  ADD VIEW_COL2 VARCHAR(256) PRIMARY KEY, VIEW_COL1 DECIMAL(10,2) PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -316,7 +396,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there we have to add both VIEW_COL1 and VIEW_COL2 with the right sort order
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY DESC, VIEW_COL2 VARCHAR(256) PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY DESC, VIEW_COL2 VARCHAR(256) PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -324,12 +404,12 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             }
             
             // add the pk column of the view to the base table
-            conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY, VIEW_COL2 VARCHAR(256) PRIMARY KEY");
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 1, 5, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 1, 5, 5, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY, VIEW_COL2 VARCHAR(256) PRIMARY KEY");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, 1, 5, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            assertTableDefinition(conn, viewOfTable, PTableType.VIEW, tableName, 1, 5, 5, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
             
             // query table
-            ResultSet rs = stmt.executeQuery("SELECT * FROM TABLEWITHVIEW");
+            ResultSet rs = stmt.executeQuery("SELECT * FROM " + tableName);
             assertTrue(rs.next());
             assertEquals("view1", rs.getString("ID"));
             assertEquals(12, rs.getInt("COL1"));
@@ -339,7 +419,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
 
             // query view
-            rs = stmt.executeQuery("SELECT * FROM VIEWOFTABLE");
+            rs = stmt.executeQuery("SELECT * FROM " + viewOfTable);
             assertTrue(rs.next());
             assertEquals("view1", rs.getString("ID"));
             assertEquals(12, rs.getInt("COL1"));
@@ -353,25 +433,28 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
     @Test
     public void testAddExistingViewPkColumnToBaseTableWithMultipleViews() throws Exception {
         try (Connection conn = DriverManager.getConnection(getUrl());
-                Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {              
-            String ddlFormat = "CREATE TABLE IF NOT EXISTS TABLEWITHVIEW ("
+                Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {
+            String tableName = generateUniqueName();
+            String viewOfTable1 = tableName + "_VIEW1";
+            String viewOfTable2 = tableName + "_VIEW2";
+            String ddlFormat = "CREATE TABLE IF NOT EXISTS " + tableName + "("
                             + " %s ID char(10) NOT NULL,"
                             + " COL1 integer NOT NULL,"
                             + " COL2 integer NOT NULL,"
                             + " CONSTRAINT NAME_PK PRIMARY KEY (%s ID, COL1, COL2)"
                             + " ) %s";
             conn.createStatement().execute(generateDDL(ddlFormat));
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
             
-            viewConn.createStatement().execute("CREATE VIEW VIEWOFTABLE1 ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) CONSTRAINT pk PRIMARY KEY (VIEW_COL1, VIEW_COL2)) AS SELECT * FROM TABLEWITHVIEW");
-            assertTableDefinition(conn, "VIEWOFTABLE1", PTableType.VIEW, "TABLEWITHVIEW", 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable1 + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) CONSTRAINT pk PRIMARY KEY (VIEW_COL1, VIEW_COL2)) AS SELECT * FROM " + tableName);
+            assertTableDefinition(conn, viewOfTable1, PTableType.VIEW, tableName, 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
             
-            viewConn.createStatement().execute("CREATE VIEW VIEWOFTABLE2 ( VIEW_COL3 VARCHAR(256), VIEW_COL4 DECIMAL(10,2) CONSTRAINT pk PRIMARY KEY (VIEW_COL3, VIEW_COL4)) AS SELECT * FROM TABLEWITHVIEW");
-            assertTableDefinition(conn, "VIEWOFTABLE2", PTableType.VIEW, "TABLEWITHVIEW", 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL3", "VIEW_COL4");
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable2 + " ( VIEW_COL3 VARCHAR(256), VIEW_COL4 DECIMAL(10,2) CONSTRAINT pk PRIMARY KEY (VIEW_COL3, VIEW_COL4)) AS SELECT * FROM " + tableName);
+            assertTableDefinition(conn, viewOfTable2, PTableType.VIEW, tableName, 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL3", "VIEW_COL4");
             
             try {
                 // should fail because there are two view with different pk columns
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL PRIMARY KEY, VIEW_COL2 VARCHAR PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL PRIMARY KEY, VIEW_COL2 VARCHAR PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -380,7 +463,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because there are two view with different pk columns
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL3 VARCHAR PRIMARY KEY, VIEW_COL4 DECIMAL PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL3 VARCHAR PRIMARY KEY, VIEW_COL4 DECIMAL PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -389,7 +472,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because slot positions of pks are different
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL PRIMARY KEY, VIEW_COL2 VARCHAR PRIMARY KEY, VIEW_COL3 VARCHAR PRIMARY KEY, VIEW_COL4 DECIMAL PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL PRIMARY KEY, VIEW_COL2 VARCHAR PRIMARY KEY, VIEW_COL3 VARCHAR PRIMARY KEY, VIEW_COL4 DECIMAL PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -398,7 +481,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because slot positions of pks are different
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL3 VARCHAR PRIMARY KEY, VIEW_COL4 DECIMAL PRIMARY KEY, VIEW_COL1 DECIMAL PRIMARY KEY, VIEW_COL2 VARCHAR PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL3 VARCHAR PRIMARY KEY, VIEW_COL4 DECIMAL PRIMARY KEY, VIEW_COL1 DECIMAL PRIMARY KEY, VIEW_COL2 VARCHAR PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -415,23 +498,26 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             conn.setAutoCommit(false);
             viewConn.setAutoCommit(false);
             viewConn2.setAutoCommit(false);
-            String ddlFormat = "CREATE TABLE IF NOT EXISTS TABLEWITHVIEW ("
+            String tableName = generateUniqueName();
+            String viewOfTable1 = tableName + "_VIEW1";
+            String viewOfTable2 = tableName + "_VIEW2";
+            String ddlFormat = "CREATE TABLE IF NOT EXISTS " + tableName + "("
                     + " %s ID char(10) NOT NULL,"
                     + " COL1 integer NOT NULL,"
                     + " COL2 integer NOT NULL,"
                     + " CONSTRAINT NAME_PK PRIMARY KEY (%s ID, COL1, COL2)"
                     + " ) %s";
             conn.createStatement().execute(generateDDL(ddlFormat));
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
             
-            viewConn.createStatement().execute("CREATE VIEW VIEWOFTABLE1 ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) CONSTRAINT pk PRIMARY KEY (VIEW_COL1, VIEW_COL2)) AS SELECT * FROM TABLEWITHVIEW");
-            assertTableDefinition(conn, "VIEWOFTABLE1", PTableType.VIEW, "TABLEWITHVIEW", 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable1 + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) CONSTRAINT pk PRIMARY KEY (VIEW_COL1, VIEW_COL2)) AS SELECT * FROM " + tableName);
+            assertTableDefinition(conn, viewOfTable1, PTableType.VIEW, tableName, 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
             
-            viewConn2.createStatement().execute("CREATE VIEW VIEWOFTABLE2 ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) CONSTRAINT pk PRIMARY KEY (VIEW_COL1, VIEW_COL2)) AS SELECT * FROM TABLEWITHVIEW");
-            assertTableDefinition(conn, "VIEWOFTABLE2", PTableType.VIEW, "TABLEWITHVIEW", 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            viewConn2.createStatement().execute("CREATE VIEW " + viewOfTable2 + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR(256) CONSTRAINT pk PRIMARY KEY (VIEW_COL1, VIEW_COL2)) AS SELECT * FROM " + tableName);
+            assertTableDefinition(conn, viewOfTable2, PTableType.VIEW, tableName, 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
             
             // upsert single row into both view
-            String dml = "UPSERT INTO VIEWOFTABLE1 VALUES(?,?,?,?,?)";
+            String dml = "UPSERT INTO " + viewOfTable1 + " VALUES(?,?,?,?,?)";
             PreparedStatement stmt = viewConn.prepareStatement(dml);
             stmt.setString(1, "view1");
             stmt.setInt(2, 12);
@@ -440,7 +526,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             stmt.setString(5, "view5");
             stmt.execute();
             viewConn.commit();
-            dml = "UPSERT INTO VIEWOFTABLE2 VALUES(?,?,?,?,?)";
+            dml = "UPSERT INTO " + viewOfTable2 + " VALUES(?,?,?,?,?)";
             stmt = viewConn2.prepareStatement(dml);
             stmt.setString(1, "view1");
             stmt.setInt(2, 12);
@@ -452,7 +538,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because the view have two extra columns in their pk
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -461,7 +547,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because the view have two extra columns in their pk
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL2 VARCHAR(256) PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL2 VARCHAR(256) PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
@@ -470,20 +556,20 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             
             try {
                 // should fail because slot positions of pks are different
-                conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL2 DECIMAL(10,2) PRIMARY KEY, VIEW_COL1 VARCHAR(256) PRIMARY KEY");
+                conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL2 DECIMAL(10,2) PRIMARY KEY, VIEW_COL1 VARCHAR(256) PRIMARY KEY");
                 fail();
             }
             catch (SQLException e) {
                 assertEquals("Unexpected exception", CANNOT_MUTATE_TABLE.getErrorCode(), e.getErrorCode());
             }
             
-            conn.createStatement().execute("ALTER TABLE TABLEWITHVIEW ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY, VIEW_COL2 VARCHAR(256) PRIMARY KEY");
-            assertTableDefinition(conn, "TABLEWITHVIEW", PTableType.TABLE, null, 1, 5, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
-            assertTableDefinition(conn, "VIEWOFTABLE1", PTableType.VIEW, "TABLEWITHVIEW", 1, 5, 5, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
-            assertTableDefinition(conn, "VIEWOFTABLE2", PTableType.VIEW, "TABLEWITHVIEW", 1, 5, 5, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            conn.createStatement().execute("ALTER TABLE " + tableName + " ADD VIEW_COL1 DECIMAL(10,2) PRIMARY KEY, VIEW_COL2 VARCHAR(256) PRIMARY KEY");
+            assertTableDefinition(conn, tableName, PTableType.TABLE, null, 1, 5, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            assertTableDefinition(conn, viewOfTable1, PTableType.VIEW, tableName, 1, 5, 5, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            assertTableDefinition(conn, viewOfTable2, PTableType.VIEW, tableName, 1, 5, 5, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
             
             // query table
-            ResultSet rs = stmt.executeQuery("SELECT * FROM TABLEWITHVIEW");
+            ResultSet rs = stmt.executeQuery("SELECT * FROM " + tableName);
             assertTrue(rs.next());
             assertEquals("view1", rs.getString("ID"));
             assertEquals(12, rs.getInt("COL1"));
@@ -493,7 +579,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
 
             // query both views
-            rs = viewConn.createStatement().executeQuery("SELECT * FROM VIEWOFTABLE1");
+            rs = viewConn.createStatement().executeQuery("SELECT * FROM " + viewOfTable1);
             assertTrue(rs.next());
             assertEquals("view1", rs.getString("ID"));
             assertEquals(12, rs.getInt("COL1"));
@@ -501,7 +587,7 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             assertEquals(14, rs.getInt("VIEW_COL1"));
             assertEquals("view5", rs.getString("VIEW_COL2"));
             assertFalse(rs.next());
-            rs = viewConn2.createStatement().executeQuery("SELECT * FROM VIEWOFTABLE2");
+            rs = viewConn2.createStatement().executeQuery("SELECT * FROM " + viewOfTable2);
             assertTrue(rs.next());
             assertEquals("view1", rs.getString("ID"));
             assertEquals(12, rs.getInt("COL1"));
@@ -521,14 +607,14 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
         else {
             cols = columnNames;
         }
-        AlterMultiTenantTableWithViews.assertTableDefinition(conn, tableName, tableType, parentTableName, sequenceNumber, columnCount + delta,
+        AlterMultiTenantTableWithViewsIT.assertTableDefinition(conn, tableName, tableType, parentTableName, sequenceNumber, columnCount + delta,
             baseColumnCount==QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT ? baseColumnCount : baseColumnCount +delta, cols);
     }
     
     public static String getSystemCatalogEntriesForTable(Connection conn, String tableName, String message) throws Exception {
         StringBuilder sb = new StringBuilder(message);
         sb.append("\n\n\n");
-        ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM SYSTEM.CATALOG WHERE TABLE_NAME='"+ tableName +"'");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM \"SYSTEM\".\"CATALOG\" WHERE TABLE_NAME='"+ tableName +"'");
         ResultSetMetaData metaData = rs.getMetaData();
         int rowNum = 0;
         while (rs.next()) {
@@ -546,9 +632,9 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testAlteringViewThatHasChildViews() throws Exception {
-        String baseTable = "testAlteringViewThatHasChildViews";
-        String childView = "childView";
-        String grandChildView = "grandChildView";
+        String baseTable = generateUniqueName();
+        String childView = baseTable + "cildView";
+        String grandChildView = baseTable + "grandChildView";
         try (Connection conn = DriverManager.getConnection(getUrl());
                 Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {
             String ddlFormat = "CREATE TABLE IF NOT EXISTS " + baseTable + "  ("
@@ -602,9 +688,9 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testDivergedViewsStayDiverged() throws Exception {
-        String baseTable = "testDivergedViewsStayDiverged";
-        String view1 = baseTable + "_view1";
-        String view2 = baseTable + "_view2";
+        String baseTable = generateUniqueName();
+        String view1 = baseTable + "_VIEW1";
+        String view2 = baseTable + "_VIEW2";
         try (Connection conn = DriverManager.getConnection(getUrl());
                 Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ;
                 Connection viewConn2 = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL2) : conn) {
@@ -645,7 +731,8 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
     public void testMakeBaseTableTransactional() throws Exception {
         try (Connection conn = DriverManager.getConnection(getUrl());
                 Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {  
-            String baseTableName = "NONTXNTBL_" + (isMultiTenant ? "0":"1");
+            String baseTableName = "NONTXNTBL_" + generateUniqueName() + (isMultiTenant ? "0":"1");
+            String viewOfTable = baseTableName + "_VIEW";
             String ddlFormat = "CREATE TABLE IF NOT EXISTS " + baseTableName + " ("
                             + " %s ID char(1) NOT NULL,"
                             + " COL1 integer NOT NULL,"
@@ -655,25 +742,104 @@ public class AlterTableWithViewsIT extends BaseHBaseManagedTimeIT {
             conn.createStatement().execute(generateDDL(ddlFormat));
             assertTableDefinition(conn, baseTableName, PTableType.TABLE, null, 0, 3, QueryConstants.BASE_TABLE_BASE_COLUMN_COUNT, "ID", "COL1", "COL2");
             
-            viewConn.createStatement().execute("CREATE VIEW VIEWOFTABLE ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR ) AS SELECT * FROM "+baseTableName);
-            assertTableDefinition(conn, "VIEWOFTABLE", PTableType.VIEW, "TABLEWITHVIEW", 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
+            viewConn.createStatement().execute("CREATE VIEW " + viewOfTable + " ( VIEW_COL1 DECIMAL(10,2), VIEW_COL2 VARCHAR ) AS SELECT * FROM "+baseTableName);
+            assertTableDefinition(conn, viewOfTable, PTableType.VIEW, baseTableName, 0, 5, 3, "ID", "COL1", "COL2", "VIEW_COL1", "VIEW_COL2");
             
             PName tenantId = isMultiTenant ? PNameFactory.newName("tenant1") : null;
             PhoenixConnection phoenixConn = conn.unwrap(PhoenixConnection.class);
             HTableInterface htable = phoenixConn.getQueryServices().getTable(Bytes.toBytes(baseTableName));
             assertFalse(htable.getTableDescriptor().getCoprocessors().contains(PhoenixTransactionalProcessor.class.getName()));
             assertFalse(phoenixConn.getTable(new PTableKey(null, baseTableName)).isTransactional());
-            assertFalse(viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, "VIEWOFTABLE")).isTransactional());
+            assertFalse(viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable)).isTransactional());
             
             // make the base table transactional
             conn.createStatement().execute("ALTER TABLE " + baseTableName + " SET TRANSACTIONAL=true");
             // query the view to force the table cache to be updated
-            viewConn.createStatement().execute("SELECT * FROM VIEWOFTABLE");
+            viewConn.createStatement().execute("SELECT * FROM " + viewOfTable);
             htable = phoenixConn.getQueryServices().getTable(Bytes.toBytes(baseTableName));
             assertTrue(htable.getTableDescriptor().getCoprocessors().contains(PhoenixTransactionalProcessor.class.getName()));
             assertTrue(phoenixConn.getTable(new PTableKey(null, baseTableName)).isTransactional());
-            assertTrue(viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, "VIEWOFTABLE")).isTransactional());
+            assertTrue(viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable)).isTransactional());
         } 
+    }
+    
+    @Test
+    public void testAlterTablePropertyOnView() throws Exception {
+    	try (Connection conn = DriverManager.getConnection(getUrl());
+                Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {  
+            String baseTableName = "NONTXNTBL_" + generateUniqueName() + (isMultiTenant ? "0":"1");
+            String viewOfTable = baseTableName + "_VIEW";
+            
+	        String ddl = "CREATE TABLE " + baseTableName + " (\n"
+	                +"%s ID VARCHAR(15) NOT NULL,\n"
+	                + " COL1 integer NOT NULL,"
+	                +"CREATED_DATE DATE,\n"
+	                +"CONSTRAINT PK PRIMARY KEY (%s ID, COL1)) %s";
+	        conn.createStatement().execute(generateDDL(ddl));
+	        ddl = "CREATE VIEW " + viewOfTable + " AS SELECT * FROM " + baseTableName;
+	        viewConn.createStatement().execute(ddl);
+	        
+	        try {
+	        	viewConn.createStatement().execute("ALTER VIEW " + viewOfTable + " SET IMMUTABLE_ROWS = true");
+	            fail();
+	        } catch (SQLException e) {
+	            assertEquals(SQLExceptionCode.CANNOT_ALTER_TABLE_PROPERTY_ON_VIEW.getErrorCode(), e.getErrorCode());
+	        }
+	        
+        	viewConn.createStatement().execute("ALTER VIEW " + viewOfTable + " SET UPDATE_CACHE_FREQUENCY = 100");
+        	viewConn.createStatement().execute("SELECT * FROM "+ viewOfTable);
+        	PName tenantId = isMultiTenant ? PNameFactory.newName("tenant1") : null;
+        	assertEquals(100, viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable)).getUpdateCacheFrequency());
+	        
+	        try {
+	        	viewConn.createStatement().execute("ALTER VIEW " + viewOfTable + " SET APPEND_ONLY_SCHEMA = true");
+	            fail();
+	        } catch (SQLException e) {
+	            assertEquals(SQLExceptionCode.CANNOT_ALTER_TABLE_PROPERTY_ON_VIEW.getErrorCode(), e.getErrorCode());
+	        }
+    	}
+    }
+    
+    @Test
+    public void testAlterAppendOnlySchema() throws Exception {
+        try (Connection conn = DriverManager.getConnection(getUrl());
+                Connection viewConn = isMultiTenant ? DriverManager.getConnection(TENANT_SPECIFIC_URL1) : conn ) {  
+            String baseTableName = "NONTXNTBL_" + generateUniqueName() + (isMultiTenant ? "0":"1");
+            String viewOfTable = baseTableName + "_VIEW";
+            
+            String ddl = "CREATE TABLE " + baseTableName + " (\n"
+                    +"%s ID VARCHAR(15) NOT NULL,\n"
+                    + " COL1 integer NOT NULL,"
+                    +"CREATED_DATE DATE,\n"
+                    +"CONSTRAINT PK PRIMARY KEY (%s ID, COL1)) %s";
+            conn.createStatement().execute(generateDDL(ddl));
+            ddl = "CREATE VIEW " + viewOfTable + " AS SELECT * FROM " + baseTableName;
+            viewConn.createStatement().execute(ddl);
+            
+            PhoenixConnection phoenixConn = conn.unwrap(PhoenixConnection.class);
+            PTable table = phoenixConn.getTable(new PTableKey(null, baseTableName));
+            PName tenantId = isMultiTenant ? PNameFactory.newName("tenant1") : null;
+            assertFalse(table.isAppendOnlySchema());
+            PTable viewTable = viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable));
+            assertFalse(viewTable.isAppendOnlySchema());
+            
+            try {
+                viewConn.createStatement().execute("ALTER VIEW " + viewOfTable + " SET APPEND_ONLY_SCHEMA = true");
+                fail();
+            }
+            catch(SQLException e){
+                assertEquals(SQLExceptionCode.CANNOT_ALTER_TABLE_PROPERTY_ON_VIEW.getErrorCode(), e.getErrorCode());
+            }
+            
+            conn.createStatement().execute("ALTER TABLE " + baseTableName + " SET APPEND_ONLY_SCHEMA = true");
+            viewConn.createStatement().execute("SELECT * FROM "+viewOfTable);
+            
+            phoenixConn = conn.unwrap(PhoenixConnection.class);
+            table = phoenixConn.getTable(new PTableKey(null, baseTableName));
+            assertTrue(table.isAppendOnlySchema());
+            viewTable = viewConn.unwrap(PhoenixConnection.class).getTable(new PTableKey(tenantId, viewOfTable));
+            assertTrue(viewTable.isAppendOnlySchema());
+        }
     }
     
 }

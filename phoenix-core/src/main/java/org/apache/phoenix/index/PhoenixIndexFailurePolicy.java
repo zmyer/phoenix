@@ -31,34 +31,27 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.Stoppable;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Mutation;
-import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.coprocessor.Batch;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-import org.apache.hadoop.hbase.ipc.BlockingRpcCallback;
-import org.apache.hadoop.hbase.ipc.ServerRpcController;
-import org.apache.hadoop.hbase.protobuf.generated.ClientProtos.MutationProto;
 import org.apache.phoenix.coprocessor.MetaDataProtocol.MetaDataMutationResult;
 import org.apache.phoenix.coprocessor.MetaDataProtocol.MutationCode;
-import org.apache.phoenix.coprocessor.generated.MetaDataProtos.MetaDataResponse;
-import org.apache.phoenix.coprocessor.generated.MetaDataProtos.MetaDataService;
-import org.apache.phoenix.coprocessor.generated.MetaDataProtos.UpdateIndexStateRequest;
 import org.apache.phoenix.hbase.index.table.HTableInterfaceReference;
 import org.apache.phoenix.hbase.index.write.DelegateIndexFailurePolicy;
 import org.apache.phoenix.hbase.index.write.KillServerOnFailurePolicy;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
-import org.apache.phoenix.protobuf.ProtobufUtil;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.schema.PIndexState;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.PTable.IndexType;
-import org.apache.phoenix.schema.types.PLong;
+import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.MetaDataUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.QueryUtil;
@@ -76,7 +69,15 @@ import com.google.common.collect.Multimap;
  */
 public class PhoenixIndexFailurePolicy extends DelegateIndexFailurePolicy {
     private static final Log LOG = LogFactory.getLog(PhoenixIndexFailurePolicy.class);
+    public static final String THROW_INDEX_WRITE_FAILURE = "THROW_INDEX_WRITE_FAILURE";
+    public static final String DISABLE_INDEX_ON_WRITE_FAILURE = "DISABLE_INDEX_ON_WRITE_FAILURE";
+    public static final String REBUILD_INDEX_ON_WRITE_FAILURE = "REBUILD_INDEX_ON_WRITE_FAILURE";
+    public static final String BLOCK_DATA_TABLE_WRITES_ON_WRITE_FAILURE = "BLOCK_DATA_TABLE_WRITES_ON_WRITE_FAILURE";
     private RegionCoprocessorEnvironment env;
+    private boolean blockDataTableWritesOnFailure;
+    private boolean disableIndexOnFailure;
+    private boolean rebuildIndexOnFailure;
+    private boolean throwIndexWriteFailure;
 
     public PhoenixIndexFailurePolicy() {
         super(new KillServerOnFailurePolicy());
@@ -86,6 +87,39 @@ public class PhoenixIndexFailurePolicy extends DelegateIndexFailurePolicy {
     public void setup(Stoppable parent, RegionCoprocessorEnvironment env) {
         super.setup(parent, env);
         this.env = env;
+        rebuildIndexOnFailure = env.getConfiguration().getBoolean(QueryServices.INDEX_FAILURE_HANDLING_REBUILD_ATTRIB,
+                QueryServicesOptions.DEFAULT_INDEX_FAILURE_HANDLING_REBUILD);
+        HTableDescriptor htd = env.getRegion().getTableDesc();
+        // If rebuild index is turned off globally, no need to check the table because the background thread
+        // won't be running in this case
+        if (rebuildIndexOnFailure) {
+            String value = htd.getValue(REBUILD_INDEX_ON_WRITE_FAILURE);
+            if (value != null) {
+                rebuildIndexOnFailure = Boolean.parseBoolean(value);
+            }
+        }
+        String value = htd.getValue(DISABLE_INDEX_ON_WRITE_FAILURE);
+        if (value == null) {
+            disableIndexOnFailure = env.getConfiguration().getBoolean(QueryServices.INDEX_FAILURE_DISABLE_INDEX, 
+                QueryServicesOptions.DEFAULT_INDEX_FAILURE_DISABLE_INDEX);
+        } else {
+            disableIndexOnFailure = Boolean.parseBoolean(value);
+        }
+        value = htd.getValue(BLOCK_DATA_TABLE_WRITES_ON_WRITE_FAILURE);
+        if (value == null) {
+            blockDataTableWritesOnFailure = env.getConfiguration().getBoolean(QueryServices.INDEX_FAILURE_BLOCK_WRITE, 
+                QueryServicesOptions.DEFAULT_INDEX_FAILURE_BLOCK_WRITE);
+        } else {
+            blockDataTableWritesOnFailure = Boolean.parseBoolean(value);
+        }
+        
+        value = htd.getValue(THROW_INDEX_WRITE_FAILURE);
+        if (value == null) {
+	        throwIndexWriteFailure = env.getConfiguration().getBoolean(QueryServices.INDEX_FAILURE_THROW_EXCEPTION_ATTRIB,
+	                QueryServicesOptions.DEFAULT_INDEX_FAILURE_THROW_EXCEPTION);
+        } else {
+        	throwIndexWriteFailure = Boolean.parseBoolean(value);
+        }
     }
 
     /**
@@ -100,45 +134,59 @@ public class PhoenixIndexFailurePolicy extends DelegateIndexFailurePolicy {
      */
     @Override
     public void handleFailure(Multimap<HTableInterfaceReference, Mutation> attempted, Exception cause) throws IOException {
-        boolean blockWriteRebuildIndex = env.getConfiguration().getBoolean(QueryServices.INDEX_FAILURE_BLOCK_WRITE, 
-                QueryServicesOptions.DEFAULT_INDEX_FAILURE_BLOCK_WRITE);
         boolean throwing = true;
+        long timestamp = HConstants.LATEST_TIMESTAMP;
         try {
-            handleFailureWithExceptions(attempted, cause, blockWriteRebuildIndex);
+            timestamp = handleFailureWithExceptions(attempted, cause);
             throwing = false;
         } catch (Throwable t) {
             LOG.warn("handleFailure failed", t);
             super.handleFailure(attempted, cause);
             throwing = false;
         } finally {
-            if (!throwing) throw ServerUtil.createIOException(null, cause);
+            if (!throwing) {
+            	IOException ioException = ServerUtil.wrapInDoNotRetryIOException("Unable to update the following indexes: " + attempted.keySet(), cause, timestamp);
+            	Mutation m = attempted.entries().iterator().next().getValue();
+            	boolean isIndexRebuild = PhoenixIndexMetaData.isIndexRebuild(m.getAttributesMap());
+            	// Always throw if rebuilding index since the rebuilder needs to know if it was successful
+            	if (throwIndexWriteFailure || isIndexRebuild) {
+            		throw ioException;
+            	} else {
+                    LOG.warn("Swallowing index write failure", ioException);
+            	}
+            }
         }
     }
 
-    private void handleFailureWithExceptions(Multimap<HTableInterfaceReference, Mutation> attempted,
-            Exception cause, boolean blockWriteRebuildIndex) throws Throwable {
+    private long handleFailureWithExceptions(Multimap<HTableInterfaceReference, Mutation> attempted,
+            Exception cause) throws Throwable {
         Set<HTableInterfaceReference> refs = attempted.asMap().keySet();
         Map<String, Long> indexTableNames = new HashMap<String, Long>(refs.size());
         // start by looking at all the tables to which we attempted to write
+        long timestamp = 0;
+        boolean leaveIndexActive = blockDataTableWritesOnFailure || !disableIndexOnFailure;
         for (HTableInterfaceReference ref : refs) {
             long minTimeStamp = 0;
 
             // get the minimum timestamp across all the mutations we attempted on that table
+            // FIXME: all cell timestamps should be the same
             Collection<Mutation> mutations = attempted.get(ref);
             if (mutations != null) {
                 for (Mutation m : mutations) {
                     for (List<Cell> kvs : m.getFamilyCellMap().values()) {
                         for (Cell kv : kvs) {
-                            if (minTimeStamp == 0 || (kv.getTimestamp() >= 0 && minTimeStamp < kv.getTimestamp())) {
+                            if (minTimeStamp == 0 || (kv.getTimestamp() >= 0 && minTimeStamp > kv.getTimestamp())) {
                                 minTimeStamp = kv.getTimestamp();
                             }
                         }
                     }
                 }
             }
+            timestamp = minTimeStamp;
 
-            // its a local index table, so we need to convert it to the index table names we should disable
-            if (MetaDataUtil.isLocalIndex(ref.getTableName())) {
+            // If the data table has local index column families then get local indexes to disable.
+            if (ref.getTableName().equals(env.getRegion().getTableDesc().getNameAsString())
+                    && MetaDataUtil.hasLocalIndexColumnFamily(env.getRegion().getTableDesc())) {
                 for (String tableName : getLocalIndexNames(ref, mutations)) {
                     indexTableNames.put(tableName, minTimeStamp);
                 }
@@ -147,74 +195,59 @@ public class PhoenixIndexFailurePolicy extends DelegateIndexFailurePolicy {
             }
         }
 
+        // Nothing to do if we're not disabling the index and not rebuilding on failure
+        if (!disableIndexOnFailure && !rebuildIndexOnFailure) {
+            return timestamp;
+        }
+
+        PIndexState newState = disableIndexOnFailure ? PIndexState.DISABLE : PIndexState.ACTIVE;
         // for all the index tables that we've found, try to disable them and if that fails, try to
         for (Map.Entry<String, Long> tableTimeElement :indexTableNames.entrySet()){
             String indexTableName = tableTimeElement.getKey();
             long minTimeStamp = tableTimeElement.getValue();
+            // We need a way of differentiating the block writes to data table case from
+            // the leave index active case. In either case, we need to know the time stamp
+            // at which writes started failing so we can rebuild from that point. If we
+            // keep the index active *and* have a positive INDEX_DISABLE_TIMESTAMP_BYTES,
+            // then writes to the data table will be blocked (this is client side logic
+            // and we can't change this in a minor release). So we use the sign of the
+            // time stamp to differentiate.
+            if (!disableIndexOnFailure && !blockDataTableWritesOnFailure) {
+                minTimeStamp *= -1;
+            }
             // Disable the index by using the updateIndexState method of MetaDataProtocol end point coprocessor.
-            byte[] indexTableKey = SchemaUtil.getTableKeyFromFullName(indexTableName);
             HTableInterface systemTable = env.getTable(SchemaUtil
                     .getPhysicalTableName(PhoenixDatabaseMetaData.SYSTEM_CATALOG_NAME_BYTES, env.getConfiguration()));
-            // Mimic the Put that gets generated by the client on an update of the index state
-            Put put = new Put(indexTableKey);
-            if (blockWriteRebuildIndex) 
-                put.add(PhoenixDatabaseMetaData.TABLE_FAMILY_BYTES, PhoenixDatabaseMetaData.INDEX_STATE_BYTES,
-                        PIndexState.ACTIVE.getSerializedBytes());
-            else  
-                put.add(PhoenixDatabaseMetaData.TABLE_FAMILY_BYTES, PhoenixDatabaseMetaData.INDEX_STATE_BYTES,
-                        PIndexState.DISABLE.getSerializedBytes());
-            put.add(PhoenixDatabaseMetaData.TABLE_FAMILY_BYTES, PhoenixDatabaseMetaData.INDEX_DISABLE_TIMESTAMP_BYTES,
-                PLong.INSTANCE.toBytes(minTimeStamp));
-            final List<Mutation> tableMetadata = Collections.<Mutation>singletonList(put);
-
-            final Map<byte[], MetaDataResponse> results =
-                    systemTable.coprocessorService(MetaDataService.class, indexTableKey, indexTableKey,
-                            new Batch.Call<MetaDataService, MetaDataResponse>() {
-                                @Override
-                                public MetaDataResponse call(MetaDataService instance) throws IOException {
-                                    ServerRpcController controller = new ServerRpcController();
-                                    BlockingRpcCallback<MetaDataResponse> rpcCallback =
-                                            new BlockingRpcCallback<MetaDataResponse>();
-                                    UpdateIndexStateRequest.Builder builder = UpdateIndexStateRequest.newBuilder();
-                                    for (Mutation m : tableMetadata) {
-                                        MutationProto mp = ProtobufUtil.toProto(m);
-                                        builder.addTableMetadataMutations(mp.toByteString());
-                                    }
-                                    instance.updateIndexState(controller, builder.build(), rpcCallback);
-                                    if (controller.getFailedOn() != null) {
-                                        throw controller.getFailedOn();
-                                    }
-                                    return rpcCallback.get();
-                                }
-                            });
-            if (results.isEmpty()) {
-                throw new IOException("Didn't get expected result size");
-            }
-            MetaDataResponse tmpResponse = results.values().iterator().next();
-            MetaDataMutationResult result = MetaDataMutationResult.constructFromProto(tmpResponse);
-
+            MetaDataMutationResult result = IndexUtil.setIndexDisableTimeStamp(indexTableName, minTimeStamp,
+                    systemTable, newState);
             if (result.getMutationCode() == MutationCode.TABLE_NOT_FOUND) {
                 LOG.info("Index " + indexTableName + " has been dropped. Ignore uncommitted mutations");
                 continue;
             }
             if (result.getMutationCode() != MutationCode.TABLE_ALREADY_EXISTS) {
-                if (blockWriteRebuildIndex) {
+                if (leaveIndexActive) {
                     LOG.warn("Attempt to update INDEX_DISABLE_TIMESTAMP " + " failed with code = "
                             + result.getMutationCode());
-                    throw new DoNotRetryIOException("Attempt to update INDEX_DISABLE_TIMESTAMP failed.");
+                    // If we're not disabling the index, then we don't want to throw as throwing
+                    // will lead to the RS being shutdown.
+                    if (blockDataTableWritesOnFailure) {
+                        throw new DoNotRetryIOException("Attempt to update INDEX_DISABLE_TIMESTAMP failed.");
+                    }
                 } else {
                     LOG.warn("Attempt to disable index " + indexTableName + " failed with code = "
                             + result.getMutationCode() + ". Will use default failure policy instead.");
                     throw new DoNotRetryIOException("Attempt to disable " + indexTableName + " failed.");
                 } 
             }
-            if (blockWriteRebuildIndex)
+            if (leaveIndexActive)
                 LOG.info("Successfully update INDEX_DISABLE_TIMESTAMP for " + indexTableName + " due to an exception while writing updates.",
                         cause);
             else
                 LOG.info("Successfully disabled index " + indexTableName + " due to an exception while writing updates.",
                         cause);
         }
+        // Return the cell time stamp (note they should all be the same)
+        return timestamp;
     }
 
     private Collection<? extends String> getLocalIndexNames(HTableInterfaceReference ref,
@@ -222,10 +255,9 @@ public class PhoenixIndexFailurePolicy extends DelegateIndexFailurePolicy {
         Set<String> indexTableNames = new HashSet<String>(1);
         PhoenixConnection conn = null;
         try {
-            conn = QueryUtil.getConnection(this.env.getConfiguration()).unwrap(
+            conn = QueryUtil.getConnectionOnServer(this.env.getConfiguration()).unwrap(
                     PhoenixConnection.class);
-            String userTableName = MetaDataUtil.getUserTableName(ref.getTableName());
-            PTable dataTable = PhoenixRuntime.getTable(conn, userTableName);
+            PTable dataTable = PhoenixRuntime.getTableNoCache(conn, ref.getTableName());
             List<PTable> indexes = dataTable.getIndexes();
             // local index used to get view id from index mutation row key.
             PTable localIndex = null;

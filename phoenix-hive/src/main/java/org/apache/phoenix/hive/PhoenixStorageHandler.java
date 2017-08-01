@@ -19,7 +19,10 @@ package org.apache.phoenix.hive;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.mapred.TableMapReduceUtil;
 import org.apache.hadoop.hive.common.JavaUtils;
 import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaHook;
@@ -31,8 +34,10 @@ import org.apache.hadoop.hive.ql.metadata.HiveStoragePredicateHandler;
 import org.apache.hadoop.hive.ql.metadata.InputEstimator;
 import org.apache.hadoop.hive.ql.plan.ExprNodeDesc;
 import org.apache.hadoop.hive.ql.plan.TableDesc;
+import org.apache.hadoop.hive.ql.session.SessionState;
 import org.apache.hadoop.hive.serde2.Deserializer;
 import org.apache.hadoop.hive.serde2.SerDe;
+import org.apache.hadoop.hive.shims.ShimLoader;
 import org.apache.hadoop.mapred.InputFormat;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.OutputFormat;
@@ -40,13 +45,13 @@ import org.apache.phoenix.hive.constants.PhoenixStorageHandlerConstants;
 import org.apache.phoenix.hive.mapreduce.PhoenixInputFormat;
 import org.apache.phoenix.hive.mapreduce.PhoenixOutputFormat;
 import org.apache.phoenix.hive.ppd.PhoenixPredicateDecomposer;
-import org.apache.phoenix.hive.ppd.PhoenixPredicateDecomposerManager;
-import org.apache.phoenix.hive.util.PhoenixStorageHandlerUtil;
 import org.apache.phoenix.mapreduce.util.PhoenixConfigurationUtil;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 
 /**
  * This class manages all the Phoenix/Hive table initial configurations and SerDe Election
@@ -54,6 +59,22 @@ import java.util.Properties;
 @SuppressWarnings("deprecation")
 public class PhoenixStorageHandler extends DefaultStorageHandler implements
         HiveStoragePredicateHandler, InputEstimator {
+
+
+    private Configuration jobConf;
+    private Configuration hbaseConf;
+
+
+    @Override
+    public void setConf(Configuration conf) {
+        jobConf = conf;
+        hbaseConf = HBaseConfiguration.create(conf);
+    }
+
+    @Override
+    public Configuration getConf() {
+        return hbaseConf;
+    }
 
     private static final Log LOG = LogFactory.getLog(PhoenixStorageHandler.class);
 
@@ -68,10 +89,32 @@ public class PhoenixStorageHandler extends DefaultStorageHandler implements
         return new PhoenixMetaHook();
     }
 
+    @Override
+    public void configureJobConf(TableDesc tableDesc, JobConf jobConf) {
+        try {
+            TableMapReduceUtil.addDependencyJars(jobConf);
+            org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil.addDependencyJars(jobConf,
+                    PhoenixStorageHandler.class);
+            JobConf hbaseJobConf = new JobConf(getConf());
+            org.apache.hadoop.hbase.mapred.TableMapReduceUtil.initCredentials(hbaseJobConf);
+            ShimLoader.getHadoopShims().mergeCredentials(jobConf, hbaseJobConf);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+
+    }
+
     @SuppressWarnings("rawtypes")
     @Override
     public Class<? extends OutputFormat> getOutputFormatClass() {
         return PhoenixOutputFormat.class;
+    }
+
+    @SuppressWarnings("rawtypes")
+    @Override
+    public Class<? extends InputFormat> getInputFormatClass() {
+        return PhoenixInputFormat.class;
     }
 
     @Override
@@ -144,7 +187,15 @@ public class PhoenixStorageHandler extends DefaultStorageHandler implements
             tableProperties.setProperty(PhoenixStorageHandlerConstants.PHOENIX_TABLE_NAME,
                     tableName);
         }
+        SessionState sessionState = SessionState.get();
 
+        String sessionId;
+        if(sessionState!= null) {
+            sessionId = sessionState.getSessionId();
+        }  else {
+            sessionId = UUID.randomUUID().toString();
+        }
+        jobProperties.put(PhoenixConfigurationUtil.SESSION_ID, sessionId);
         jobProperties.put(PhoenixConfigurationUtil.INPUT_TABLE_NAME, tableName);
         jobProperties.put(PhoenixStorageHandlerConstants.ZOOKEEPER_QUORUM, tableProperties
                 .getProperty(PhoenixStorageHandlerConstants.ZOOKEEPER_QUORUM,
@@ -155,6 +206,11 @@ public class PhoenixStorageHandler extends DefaultStorageHandler implements
         jobProperties.put(PhoenixStorageHandlerConstants.ZOOKEEPER_PARENT, tableProperties
                 .getProperty(PhoenixStorageHandlerConstants.ZOOKEEPER_PARENT,
                         PhoenixStorageHandlerConstants.DEFAULT_ZOOKEEPER_PARENT));
+        String columnMapping = tableProperties
+                .getProperty(PhoenixStorageHandlerConstants.PHOENIX_COLUMN_MAPPING);
+        if(columnMapping != null) {
+            jobProperties.put(PhoenixStorageHandlerConstants.PHOENIX_COLUMN_MAPPING, columnMapping);
+        }
 
         jobProperties.put(hive_metastoreConstants.META_TABLE_STORAGE, this.getClass().getName());
 
@@ -165,6 +221,24 @@ public class PhoenixStorageHandler extends DefaultStorageHandler implements
                 (PhoenixStorageHandlerConstants.ZOOKEEPER_PORT));
         jobProperties.put(HConstants.ZOOKEEPER_ZNODE_PARENT, jobProperties.get
                 (PhoenixStorageHandlerConstants.ZOOKEEPER_PARENT));
+        addHBaseResources(jobConf, jobProperties);
+    }
+
+    /**
+     * Utility method to add hbase-default.xml and hbase-site.xml properties to a new map
+     * if they are not already present in the jobConf.
+     * @param jobConf Job configuration
+     * @param newJobProperties  Map to which new properties should be added
+     */
+    private void addHBaseResources(Configuration jobConf,
+                                   Map<String, String> newJobProperties) {
+        Configuration conf = new Configuration(false);
+        HBaseConfiguration.addHbaseResources(conf);
+        for (Map.Entry<String, String> entry : conf) {
+            if (jobConf.get(entry.getKey()) == null) {
+                newJobProperties.put(entry.getKey(), entry.getValue());
+            }
+        }
     }
 
     @Override
@@ -176,19 +250,9 @@ public class PhoenixStorageHandler extends DefaultStorageHandler implements
     public DecomposedPredicate decomposePredicate(JobConf jobConf, Deserializer deserializer,
                                                   ExprNodeDesc predicate) {
         PhoenixSerDe phoenixSerDe = (PhoenixSerDe) deserializer;
-        String tableName = phoenixSerDe.getTableProperties().getProperty
-                (PhoenixStorageHandlerConstants.PHOENIX_TABLE_NAME);
-        String predicateKey = PhoenixStorageHandlerUtil.getTableKeyOfSession(jobConf, tableName);
-
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("Decomposing predicate with predicateKey : " + predicateKey);
-        }
-
         List<String> columnNameList = phoenixSerDe.getSerdeParams().getColumnNames();
-        PhoenixPredicateDecomposer predicateDecomposer = PhoenixPredicateDecomposerManager
-                .createPredicateDecomposer(predicateKey, columnNameList);
 
-        return predicateDecomposer.decomposePredicate(predicate);
+        return PhoenixPredicateDecomposer.create(columnNameList).decomposePredicate(predicate);
     }
 
     @Override

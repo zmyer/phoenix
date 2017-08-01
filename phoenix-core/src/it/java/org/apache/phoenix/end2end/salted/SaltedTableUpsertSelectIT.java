@@ -31,13 +31,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Properties;
 
-import org.apache.phoenix.end2end.BaseHBaseManagedTimeIT;
-import org.apache.phoenix.end2end.BaseHBaseManagedTimeTableReuseIT;
+import org.apache.phoenix.end2end.ParallelStatsDisabledIT;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.junit.Test;
 
 
-public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT {
+public class SaltedTableUpsertSelectIT extends ParallelStatsDisabledIT {
 
     @Test
     public void testUpsertIntoSaltedTableFromNormalTable() throws Exception {
@@ -45,11 +44,11 @@ public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT 
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String source = generateRandomString();
+            String source = generateUniqueName();
             String ddl = "CREATE TABLE IF NOT EXISTS " + source +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col INTEGER)";
             createTestTable(getUrl(), ddl);
-            String target = generateRandomString();
+            String target = generateUniqueName();
             ddl = "CREATE TABLE IF NOT EXISTS " + target +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col INTEGER) SALT_BUCKETS=4";
             createTestTable(getUrl(), ddl);
@@ -84,11 +83,11 @@ public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT 
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String source = generateRandomString();
+            String source = generateUniqueName();
             String ddl = "CREATE TABLE IF NOT EXISTS " + source +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col INTEGER) SALT_BUCKETS=4";
             createTestTable(getUrl(), ddl);
-            String target = generateRandomString();
+            String target = generateUniqueName();
             ddl = "CREATE TABLE IF NOT EXISTS " + target +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col INTEGER)";
             createTestTable(getUrl(), ddl);
@@ -128,11 +127,11 @@ public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT 
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String source = generateRandomString();
+            String source = generateUniqueName();
             String ddl = "CREATE TABLE IF NOT EXISTS " + source +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col INTEGER) SALT_BUCKETS=4";
             createTestTable(getUrl(), ddl);
-            String target = generateRandomString();
+            String target = generateUniqueName();
             ddl = "CREATE TABLE IF NOT EXISTS " + target +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col INTEGER) SALT_BUCKETS=4";
             createTestTable(getUrl(), ddl);
@@ -167,7 +166,7 @@ public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT 
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String source = generateRandomString();
+            String source = generateUniqueName();
             String ddl = "CREATE TABLE IF NOT EXISTS " + source +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col1 INTEGER, col2 INTEGER) SALT_BUCKETS=4";
             createTestTable(getUrl(), ddl);
@@ -201,7 +200,7 @@ public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT 
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String source1 = generateRandomString();
+            String source1 = generateUniqueName();
             String ddl = "CREATE TABLE IF NOT EXISTS " + source1 +
                     " (pk1 varchar NULL, pk2 varchar NULL, pk3 integer NOT NULL, col1 INTEGER" + 
                     " CONSTRAINT pk PRIMARY KEY (pk1, pk2, pk3)) SALT_BUCKETS=4";
@@ -242,7 +241,7 @@ public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT 
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String source1 = generateRandomString();
+            String source1 = generateUniqueName();
             String ddl = "CREATE TABLE IF NOT EXISTS " + source1 +
                     " (pk1 varchar NULL, pk2 varchar NULL, pk3 integer NOT NULL, col1 INTEGER" +
                     " CONSTRAINT pk PRIMARY KEY (pk1, pk2, pk3)) SALT_BUCKETS=4";
@@ -259,7 +258,7 @@ public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT 
             }
             conn.commit();
 
-            String source2 = generateRandomString();
+            String source2 = generateUniqueName();
             String ddl2 = "CREATE TABLE IF NOT EXISTS " + source2 +
                     " (pk1 varchar NULL, pk2 varchar NULL, pk3 integer NOT NULL, col1 INTEGER" +
                     " CONSTRAINT pk PRIMARY KEY (pk1, pk2, pk3)) SALT_BUCKETS=4";
@@ -276,7 +275,7 @@ public class SaltedTableUpsertSelectIT extends BaseHBaseManagedTimeTableReuseIT 
             }
             conn.commit();
 
-            String dest = generateRandomString();
+            String dest = generateUniqueName();
             String ddl3 = "CREATE TABLE IF NOT EXISTS " + dest +
                     " (pk1 varchar NULL, pk2 varchar NULL, pk3 integer NOT NULL, col1 INTEGER" +
                     " CONSTRAINT pk PRIMARY KEY (pk1, pk2, pk3)) SALT_BUCKETS=4";

@@ -29,6 +29,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -37,11 +38,13 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Abortable;
+import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.Stoppable;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
+import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.VersionInfo;
@@ -70,11 +73,15 @@ public class TestIndexWriter {
     assertNotNull(IndexWriter.getCommitter(env));
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void getDefaultFailurePolicy() throws Exception {
     Configuration conf = new Configuration(false);
     RegionCoprocessorEnvironment env = Mockito.mock(RegionCoprocessorEnvironment.class);
+    Region region = Mockito.mock(Region.class);
+    Mockito.when(env.getRegion()).thenReturn(region);
     Mockito.when(env.getConfiguration()).thenReturn(conf);
+    Mockito.when(region.getTableDesc()).thenReturn(new HTableDescriptor());
     assertNotNull(IndexWriter.getFailurePolicy(env));
   }
 
@@ -90,6 +97,10 @@ public class TestIndexWriter {
     LOG.info("Current thread is interrupted: " + Thread.interrupted());
     Abortable abort = new StubAbortable();
     Stoppable stop = Mockito.mock(Stoppable.class);
+    RegionCoprocessorEnvironment e =Mockito.mock(RegionCoprocessorEnvironment.class);
+    Configuration conf =new Configuration();
+    Mockito.when(e.getConfiguration()).thenReturn(conf);
+    Mockito.when(e.getSharedData()).thenReturn(new ConcurrentHashMap<String,Object>());
     ExecutorService exec = Executors.newFixedThreadPool(1);
     Map<ImmutableBytesPtr, HTableInterface> tables = new HashMap<ImmutableBytesPtr, HTableInterface>();
     FakeTableFactory factory = new FakeTableFactory(tables);
@@ -117,7 +128,7 @@ public class TestIndexWriter {
 
     // setup the writer and failure policy
     ParallelWriterIndexCommitter committer = new ParallelWriterIndexCommitter(VersionInfo.getVersion());
-    committer.setup(factory, exec, abort, stop, 2);
+    committer.setup(factory, exec, abort, stop, e);
     KillServerOnFailurePolicy policy = new KillServerOnFailurePolicy();
     policy.setup(stop, abort);
     IndexWriter writer = new IndexWriter(committer, policy);
@@ -164,7 +175,10 @@ public class TestIndexWriter {
     Mockito.when(table.batch(Mockito.anyList())).thenThrow(
       new IOException("Intentional IOException for failed first write."));
     Mockito.when(table.getTableName()).thenReturn(tableName);
-
+    RegionCoprocessorEnvironment e =Mockito.mock(RegionCoprocessorEnvironment.class);
+    Configuration conf =new Configuration();
+    Mockito.when(e.getConfiguration()).thenReturn(conf);
+    Mockito.when(e.getSharedData()).thenReturn(new ConcurrentHashMap<String,Object>());
     // second table just blocks to make sure that the abort propagates to the third task
     final CountDownLatch waitOnAbortedLatch = new CountDownLatch(1);
     final boolean[] failed = new boolean[] { false };
@@ -190,15 +204,15 @@ public class TestIndexWriter {
     tables.put(new ImmutableBytesPtr(tableName2), table2);
 
     ParallelWriterIndexCommitter committer = new ParallelWriterIndexCommitter(VersionInfo.getVersion());
-    committer.setup(factory, exec, abort, stop, 2);
+    committer.setup(factory, exec, abort, stop, e);
     KillServerOnFailurePolicy policy = new KillServerOnFailurePolicy();
     policy.setup(stop, abort);
     IndexWriter writer = new IndexWriter(committer, policy);
     try {
       writer.write(indexUpdates);
       fail("Should not have successfully completed all index writes");
-    } catch (SingleIndexWriteFailureException e) {
-      LOG.info("Correctly got a failure to reach the index", e);
+    } catch (SingleIndexWriteFailureException s) {
+      LOG.info("Correctly got a failure to reach the index", s);
       // should have correctly gotten the correct abort, so let the next task execute
       waitOnAbortedLatch.countDown();
     }
@@ -223,6 +237,10 @@ public class TestIndexWriter {
     // single thread factory so the older request gets queued
     ExecutorService exec = Executors.newFixedThreadPool(1);
     Map<ImmutableBytesPtr, HTableInterface> tables = new HashMap<ImmutableBytesPtr, HTableInterface>();
+    RegionCoprocessorEnvironment e =Mockito.mock(RegionCoprocessorEnvironment.class);
+    Configuration conf =new Configuration();
+    Mockito.when(e.getConfiguration()).thenReturn(conf);
+    Mockito.when(e.getSharedData()).thenReturn(new ConcurrentHashMap<String,Object>());
     FakeTableFactory factory = new FakeTableFactory(tables);
 
     byte[] tableName = this.testName.getTableName();
@@ -257,7 +275,7 @@ public class TestIndexWriter {
 
     // setup the writer
     ParallelWriterIndexCommitter committer = new ParallelWriterIndexCommitter(VersionInfo.getVersion());
-    committer.setup(factory, exec, abort, stop, 2);
+    committer.setup(factory, exec, abort, stop, e );
     KillServerOnFailurePolicy policy = new KillServerOnFailurePolicy();
     policy.setup(stop, abort);
     final IndexWriter writer = new IndexWriter(committer, policy);

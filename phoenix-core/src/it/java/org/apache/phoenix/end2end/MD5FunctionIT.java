@@ -30,14 +30,14 @@ import java.sql.ResultSet;
 import org.junit.Test;
 
 
-public class MD5FunctionIT extends BaseHBaseManagedTimeTableReuseIT {
+public class MD5FunctionIT extends ParallelStatsDisabledIT {
   
   @Test
   public void testRetrieve() throws Exception {
       String testString = "mwalsh";
       
       Connection conn = DriverManager.getConnection(getUrl());
-      String md5_retrieve_test = generateRandomString();
+      String md5_retrieve_test = generateUniqueName();
       String ddl =
           "CREATE TABLE IF NOT EXISTS " + md5_retrieve_test + " (pk VARCHAR NOT NULL PRIMARY KEY)";
       conn.createStatement().execute(ddl);
@@ -58,7 +58,7 @@ public class MD5FunctionIT extends BaseHBaseManagedTimeTableReuseIT {
       String testString = "FOOBAR";
       
       Connection conn = DriverManager.getConnection(getUrl());
-      String md5_retrieve_test = generateRandomString();
+      String md5_retrieve_test = generateUniqueName();
       String ddl = "CREATE TABLE IF NOT EXISTS " + md5_retrieve_test
           + " (k1 CHAR(3) NOT NULL, k2 CHAR(3) NOT NULL, CONSTRAINT PK PRIMARY KEY (K1,K2))";
       conn.createStatement().execute(ddl);
@@ -81,7 +81,7 @@ public class MD5FunctionIT extends BaseHBaseManagedTimeTableReuseIT {
       String testString2 = "mwalsh2";
       
       Connection conn = DriverManager.getConnection(getUrl());
-      String md5_upsert_test = generateRandomString();
+      String md5_upsert_test = generateUniqueName();
       String ddl = "CREATE TABLE IF NOT EXISTS " + md5_upsert_test
           + " (k1 binary(16) NOT NULL,k2 binary(16) NOT NULL  CONSTRAINT pk PRIMARY KEY (k1, k2))";
       conn.createStatement().execute(ddl);

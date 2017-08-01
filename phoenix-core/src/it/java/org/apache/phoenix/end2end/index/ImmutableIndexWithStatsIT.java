@@ -25,42 +25,25 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.util.Map;
 import java.util.Properties;
 
-import org.apache.phoenix.end2end.BaseOwnClusterHBaseManagedTimeIT;
-import org.apache.phoenix.query.QueryServices;
+import org.apache.phoenix.end2end.ParallelStatsEnabledIT;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.QueryUtil;
-import org.apache.phoenix.util.ReadOnlyProps;
-import org.apache.phoenix.util.TestUtil;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.google.common.collect.Maps;
 
-
-public class ImmutableIndexWithStatsIT extends BaseOwnClusterHBaseManagedTimeIT {
+public class ImmutableIndexWithStatsIT extends ParallelStatsEnabledIT {
     
-    @BeforeClass
-    public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(5);
-        props.put(QueryServices.STATS_GUIDEPOST_WIDTH_BYTES_ATTRIB, Long.toString(1));
-        props.put(QueryServices.EXPLAIN_CHUNK_COUNT_ATTRIB, Boolean.TRUE.toString());
-        props.put(QueryServices.THREAD_POOL_SIZE_ATTRIB, Integer.toString(4));
-        props.put(QueryServices.QUEUE_SIZE_ATTRIB, Integer.toString(500));
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
-    }
-   
     @Test
     public void testIndexCreationDeadlockWithStats() throws Exception {
         String query;
         ResultSet rs;
         
+        String tableName = generateUniqueName();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
-        String tableName = TestUtil.DEFAULT_DATA_TABLE_FULL_NAME;
         conn.createStatement().execute("CREATE TABLE " + tableName + " (k VARCHAR NOT NULL PRIMARY KEY, v VARCHAR) IMMUTABLE_ROWS=TRUE");
         query = "SELECT * FROM " + tableName;
         rs = conn.createStatement().executeQuery(query);
@@ -68,8 +51,8 @@ public class ImmutableIndexWithStatsIT extends BaseOwnClusterHBaseManagedTimeIT 
 
         PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + tableName + " VALUES(?,?)");
         for (int i=0; i<6;i++) {
-	        stmt.setString(1,"k" + i);
-	        stmt.setString(2, "v" + i );
+	        stmt.setString(1, "kkkkkkkkkk" + i);
+	        stmt.setString(2, "vvvvvvvvvv" + i );
 	        stmt.execute();
         }
         conn.commit();
@@ -77,9 +60,9 @@ public class ImmutableIndexWithStatsIT extends BaseOwnClusterHBaseManagedTimeIT 
         conn.createStatement().execute("UPDATE STATISTICS " + tableName);
         query = "SELECT COUNT(*) FROM " + tableName;
         rs = conn.createStatement().executeQuery("EXPLAIN " + query);
-        assertTrue(QueryUtil.getExplainPlan(rs).startsWith("CLIENT 7-CHUNK PARALLEL 1-WAY FULL SCAN"));
+        assertTrue(QueryUtil.getExplainPlan(rs).startsWith("CLIENT PARALLEL 1-WAY FULL SCAN"));
 
-        String indexName = TestUtil.DEFAULT_INDEX_TABLE_NAME;
+        String indexName = "I_" + generateUniqueName();
         conn.createStatement().execute("CREATE INDEX " + indexName + " ON " + tableName + " (v)");
         
         query = "SELECT * FROM " + indexName;

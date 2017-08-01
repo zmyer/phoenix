@@ -22,9 +22,7 @@ import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValueUtil;
 import org.apache.hadoop.hbase.client.Mutation;
-import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
-import org.apache.hadoop.hbase.regionserver.KeyValueScanner;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.phoenix.hbase.index.ValueGetter;
 import org.apache.phoenix.hbase.index.covered.data.IndexMemStore;
@@ -88,6 +86,24 @@ public class LocalTableState implements TableState {
         }
     }
 
+    private void addUpdateCells(List<Cell> list, boolean overwrite) {
+        if (list == null) return;
+        // Avoid a copy of the Cell into a KeyValue if it's already a KeyValue
+        for (Cell c : list) {
+            this.memstore.add(maybeCopyCell(c), overwrite);
+        }
+    }
+
+    private KeyValue maybeCopyCell(Cell c) {
+        // Same as KeyValueUtil, but HBase has deprecated this method. Avoid depending on something
+        // that will likely be removed at some point in time.
+        if (c == null) return null;
+        if (c instanceof KeyValue) {
+            return (KeyValue) c;
+        }
+        return KeyValueUtil.copyToNewKeyValue(c);
+    }
+
     @Override
     public RegionCoprocessorEnvironment getEnvironment() {
         return this.env;
@@ -140,6 +156,7 @@ public class LocalTableState implements TableState {
      * @param ignoreNewerMutations ignore mutations newer than m when determining current state. Useful
      *        when replaying mutation state for partial index rebuild where writes succeeded to the data
      *        table, but not to the index table.
+     * @param indexMetaData TODO
      * @return an iterator over the columns and the {@link IndexUpdate} that should be passed back to
      *         the builder. Even if no update is necessary for the requested columns, you still need
      *         to return the {@link IndexUpdate}, just don't set the update for the
@@ -147,8 +164,8 @@ public class LocalTableState implements TableState {
      * @throws IOException
      */
     public Pair<Scanner, IndexUpdate> getIndexedColumnsTableState(
-        Collection<? extends ColumnReference> indexedColumns, boolean ignoreNewerMutations) throws IOException {
-        ensureLocalStateInitialized(indexedColumns, ignoreNewerMutations);
+        Collection<? extends ColumnReference> indexedColumns, boolean ignoreNewerMutations, boolean returnNullScannerIfRowNotFound, IndexMetaData indexMetaData) throws IOException {
+        ensureLocalStateInitialized(indexedColumns, ignoreNewerMutations, indexMetaData);
         // filter out things with a newer timestamp and track the column references to which it applies
         ColumnTracker tracker = new ColumnTracker(indexedColumns);
         synchronized (this.trackedColumns) {
@@ -158,7 +175,7 @@ public class LocalTableState implements TableState {
             }
         }
 
-        Scanner scanner = this.scannerBuilder.buildIndexedColumnScanner(indexedColumns, tracker, ts);
+        Scanner scanner = this.scannerBuilder.buildIndexedColumnScanner(indexedColumns, tracker, ts, returnNullScannerIfRowNotFound);
 
         return new Pair<Scanner, IndexUpdate>(scanner, new IndexUpdate(tracker));
     }
@@ -167,16 +184,21 @@ public class LocalTableState implements TableState {
      * Initialize the managed local state. Generally, this will only be called by
      * {@link #getNonIndexedColumnsTableState(List)}, which is unlikely to be called concurrently from the outside. Even
      * then, there is still fairly low contention as each new Put/Delete will have its own table state.
+     * @param indexMetaData TODO
      */
-    private synchronized void ensureLocalStateInitialized(Collection<? extends ColumnReference> columns, boolean ignoreNewerMutations)
+    private synchronized void ensureLocalStateInitialized(Collection<? extends ColumnReference> columns, boolean ignoreNewerMutations, IndexMetaData indexMetaData)
             throws IOException {
         // check to see if we haven't initialized any columns yet
         Collection<? extends ColumnReference> toCover = this.columnSet.findNonCoveredColumns(columns);
         // we have all the columns loaded, so we are good to go.
         if (toCover.isEmpty()) { return; }
 
-        // add the current state of the row
-        this.addUpdate(this.table.getCurrentRowState(update, toCover, ignoreNewerMutations).list(), false);
+        // no need to perform scan to find prior row values when the indexed columns are immutable, as
+        // by definition, there won't be any.
+        if (!indexMetaData.isImmutableRows()) {
+            // add the current state of the row. Uses listCells() to avoid a new array creation.
+            this.addUpdateCells(this.table.getCurrentRowState(update, toCover, ignoreNewerMutations).listCells(), false);
+        }
 
         // add the covered columns to the set
         for (ColumnReference ref : toCover) {
@@ -222,7 +244,7 @@ public class LocalTableState implements TableState {
         this.kvs.clear();
         this.kvs.addAll(update);
     }
-
+    
     /**
      * Apply the {@link KeyValue}s set in {@link #setPendingUpdates(Collection)}.
      */
@@ -242,9 +264,9 @@ public class LocalTableState implements TableState {
     }
 
     @Override
-    public Pair<ValueGetter, IndexUpdate> getIndexUpdateState(Collection<? extends ColumnReference> indexedColumns, boolean ignoreNewerMutations)
+    public Pair<ValueGetter, IndexUpdate> getIndexUpdateState(Collection<? extends ColumnReference> indexedColumns, boolean ignoreNewerMutations, boolean returnNullScannerIfRowNotFound, IndexMetaData indexMetaData)
             throws IOException {
-        Pair<Scanner, IndexUpdate> pair = getIndexedColumnsTableState(indexedColumns, ignoreNewerMutations);
+        Pair<Scanner, IndexUpdate> pair = getIndexedColumnsTableState(indexedColumns, ignoreNewerMutations, returnNullScannerIfRowNotFound, indexMetaData);
         ValueGetter valueGetter = IndexManagementUtil.createGetterFromScanner(pair.getFirst(), getCurrentRowKey());
         return new Pair<ValueGetter, IndexUpdate>(valueGetter, pair.getSecond());
     }

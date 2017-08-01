@@ -21,12 +21,10 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Abortable;
-import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.Stoppable;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
-import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.phoenix.hbase.index.exception.SingleIndexWriteFailureException;
 import org.apache.phoenix.hbase.index.parallel.EarlyExitFailure;
 import org.apache.phoenix.hbase.index.parallel.QuickFailingTaskRunner;
@@ -34,12 +32,10 @@ import org.apache.phoenix.hbase.index.parallel.Task;
 import org.apache.phoenix.hbase.index.parallel.TaskBatch;
 import org.apache.phoenix.hbase.index.parallel.ThreadPoolBuilder;
 import org.apache.phoenix.hbase.index.parallel.ThreadPoolManager;
-import org.apache.phoenix.hbase.index.table.CachingHTableFactory;
 import org.apache.phoenix.hbase.index.table.HTableFactory;
 import org.apache.phoenix.hbase.index.table.HTableInterfaceReference;
 import org.apache.phoenix.hbase.index.util.KeyValueBuilder;
 import org.apache.phoenix.util.IndexUtil;
-import org.apache.phoenix.util.MetaDataUtil;
 
 import com.google.common.collect.Multimap;
 
@@ -57,7 +53,7 @@ public class ParallelWriterIndexCommitter implements IndexCommitter {
 
     public static final String NUM_CONCURRENT_INDEX_WRITER_THREADS_CONF_KEY = "index.writer.threads.max";
     private static final int DEFAULT_CONCURRENT_INDEX_WRITER_THREADS = 10;
-    private static final String INDEX_WRITER_KEEP_ALIVE_TIME_CONF_KEY = "index.writer.threads.keepalivetime";
+    public static final String INDEX_WRITER_KEEP_ALIVE_TIME_CONF_KEY = "index.writer.threads.keepalivetime";
     private static final Log LOG = LogFactory.getLog(ParallelWriterIndexCommitter.class);
 
     private HTableFactory factory;
@@ -81,8 +77,7 @@ public class ParallelWriterIndexCommitter implements IndexCommitter {
                 ThreadPoolManager.getExecutor(
                         new ThreadPoolBuilder(name, conf).setMaxThread(NUM_CONCURRENT_INDEX_WRITER_THREADS_CONF_KEY,
                                 DEFAULT_CONCURRENT_INDEX_WRITER_THREADS).setCoreTimeout(
-                                INDEX_WRITER_KEEP_ALIVE_TIME_CONF_KEY), env), env.getRegionServerServices(), parent,
-                CachingHTableFactory.getCacheSize(conf));
+                                INDEX_WRITER_KEEP_ALIVE_TIME_CONF_KEY), env), env.getRegionServerServices(), parent, env);
         this.kvBuilder = KeyValueBuilder.get(env.getHBaseVersion());
     }
 
@@ -91,14 +86,14 @@ public class ParallelWriterIndexCommitter implements IndexCommitter {
      * <p>
      * Exposed for TESTING
      */
-    void setup(HTableFactory factory, ExecutorService pool, Abortable abortable, Stoppable stop, int cacheSize) {
-        this.factory = new CachingHTableFactory(factory, cacheSize);
+    void setup(HTableFactory factory, ExecutorService pool, Abortable abortable, Stoppable stop, RegionCoprocessorEnvironment env) {
+        this.factory = factory;
         this.pool = new QuickFailingTaskRunner(pool);
         this.stopped = stop;
     }
 
     @Override
-    public void write(Multimap<HTableInterfaceReference, Mutation> toWrite) throws SingleIndexWriteFailureException {
+    public void write(Multimap<HTableInterfaceReference, Mutation> toWrite, final boolean allowLocalUpdates) throws SingleIndexWriteFailureException {
         /*
          * This bit here is a little odd, so let's explain what's going on. Basically, we want to do the writes in
          * parallel to each index table, so each table gets its own task and is submitted to the pool. Where it gets
@@ -116,7 +111,12 @@ public class ParallelWriterIndexCommitter implements IndexCommitter {
             // doing a complete copy over of all the index update for each table.
             final List<Mutation> mutations = kvBuilder.cloneIfNecessary((List<Mutation>)entry.getValue());
             final HTableInterfaceReference tableReference = entry.getKey();
-            final RegionCoprocessorEnvironment env = this.env;
+			if (env != null
+					&& !allowLocalUpdates
+					&& tableReference.getTableName().equals(
+							env.getRegion().getTableDesc().getNameAsString())) {
+				continue;
+			}
             /*
              * Write a batch of index updates to an index table. This operation stops (is cancelable) via two
              * mechanisms: (1) setting aborted or stopped on the IndexWriter or, (2) interrupting the running thread.
@@ -129,8 +129,7 @@ public class ParallelWriterIndexCommitter implements IndexCommitter {
             tasks.add(new Task<Void>() {
 
                 /**
-                 * Do the actual write to the primary table. We don't need to worry about closing the table because that
-                 * is handled the {@link CachingHTableFactory}.
+                 * Do the actual write to the primary table.
                  * 
                  * @return
                  */
@@ -141,32 +140,28 @@ public class ParallelWriterIndexCommitter implements IndexCommitter {
                     // early exit, if that's the case
                     throwFailureIfDone();
 
-                    if (LOG.isDebugEnabled()) {
-                        LOG.debug("Writing index update:" + mutations + " to table: " + tableReference);
+                    if (LOG.isTraceEnabled()) {
+                        LOG.trace("Writing index update:" + mutations + " to table: " + tableReference);
                     }
+                    HTableInterface table = null;
                     try {
-                        // TODO: Once HBASE-11766 is fixed, reexamine whether this is necessary.
-                        // Also, checking the prefix of the table name to determine if this is a local
-                        // index is pretty hacky. If we're going to keep this, we should revisit that
-                        // as well.
-                        try {
-                            if (MetaDataUtil.isLocalIndex(tableReference.getTableName())) {
-                                Region indexRegion = IndexUtil.getIndexRegion(env);
-                                if (indexRegion != null) {
-                                    throwFailureIfDone();
-                                    indexRegion.batchMutate(mutations.toArray(new Mutation[mutations.size()]),
-                                        HConstants.NO_NONCE, HConstants.NO_NONCE);
-                                    return null;
+                        if (allowLocalUpdates
+                                && env != null
+                                && tableReference.getTableName().equals(
+                                    env.getRegion().getTableDesc().getNameAsString())) {
+                            try {
+                                throwFailureIfDone();
+                                IndexUtil.writeLocalUpdates(env.getRegion(), mutations, true);
+                                return null;
+                            } catch (IOException ignord) {
+                                // when it's failed we fall back to the standard & slow way
+                                if (LOG.isDebugEnabled()) {
+                                    LOG.debug("indexRegion.batchMutate failed and fall back to HTable.batch(). Got error="
+                                            + ignord);
                                 }
                             }
-                        } catch (IOException ignord) {
-                            // when it's failed we fall back to the standard & slow way
-                            if (LOG.isDebugEnabled()) {
-                                LOG.debug("indexRegion.batchMutate failed and fall back to HTable.batch(). Got error="
-                                        + ignord);
-                            }
                         }
-                        HTableInterface table = factory.getTable(tableReference.get());
+                        table = factory.getTable(tableReference.get());
                         throwFailureIfDone();
                         table.batch(mutations);
                     } catch (SingleIndexWriteFailureException e) {
@@ -177,6 +172,11 @@ public class ParallelWriterIndexCommitter implements IndexCommitter {
                         // reset the interrupt status on the thread
                         Thread.currentThread().interrupt();
                         throw new SingleIndexWriteFailureException(tableReference.toString(), mutations, e);
+                    }
+                    finally{
+                        if (table != null) {
+                            table.close();
+                        }
                     }
                     return null;
                 }

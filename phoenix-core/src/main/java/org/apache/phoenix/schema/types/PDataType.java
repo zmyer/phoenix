@@ -21,6 +21,8 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.sql.Array;
+import java.sql.SQLException;
 import java.text.Format;
 import java.util.Random;
 
@@ -89,8 +91,7 @@ public abstract class PDataType<T> implements DataType<T>, Comparable<PDataType<
     }
 
     public boolean isBytesComparableWith(PDataType otherType) {
-        return this == otherType || this.getClass() == PVarbinary.class || otherType == PVarbinary.INSTANCE
-                || this.getClass() == PBinary.class || otherType == PBinary.INSTANCE;
+        return equalsAny(this, otherType, PVarbinary.INSTANCE, PBinary.INSTANCE);
     }
 
     public int estimateByteSize(Object o) {
@@ -151,6 +152,18 @@ public abstract class PDataType<T> implements DataType<T>, Comparable<PDataType<
             // Special case as we may be comparing two arrays that have different separator characters due to PHOENIX-2067
             if (!this.isArrayType() || !rhsType.isArrayType() || 
                     PArrayDataType.isRowKeyOrderOptimized(this, lhsSortOrder, lhs, lhsOffset, lhsLength) == PArrayDataType.isRowKeyOrderOptimized(rhsType, rhsSortOrder, rhs, rhsOffset, rhsLength)) {
+                // Ignore trailing zero bytes if fixed byte length (for example TIMESTAMP compared to DATE)
+                if (lhsLength != rhsLength && this.isFixedWidth() && rhsType.isFixedWidth() && this.getByteSize() != null && rhsType.getByteSize() != null) {
+                    if (lhsLength > rhsLength) {
+                        int minOffset = lhsOffset + rhsLength;
+                        for (int i = lhsOffset + lhsLength - 1; i >= minOffset && lhsSortOrder.normalize(lhs[i]) == 0; i--,lhsLength--) {
+                        }
+                    } else {
+                        int minOffset = rhsOffset + lhsLength;
+                        for (int i = rhsOffset + rhsLength - 1; i >= minOffset && rhsSortOrder.normalize(rhs[i]) == 0; i--,rhsLength--) {
+                        }
+                    }
+                }
                 return compareTo(lhs, lhsOffset, lhsLength, lhsSortOrder, rhs, rhsOffset, rhsLength, rhsSortOrder);
             }
         }
@@ -196,8 +209,8 @@ public abstract class PDataType<T> implements DataType<T>, Comparable<PDataType<
             return Bytes.compareTo(lhsConverted, 0, lhsConverted.length, rhs, rhsOffset, rhsLength);
         }
         // convert to native and compare
-        if (this.isCoercibleTo(PLong.INSTANCE) && rhsType.isCoercibleTo(PLong.INSTANCE)) { // native long to long
-                                                                                           // comparison
+        if ( (this.isCoercibleTo(PLong.INSTANCE) || this.isCoercibleTo(PDate.INSTANCE)) && 
+             (rhsType.isCoercibleTo(PLong.INSTANCE) || rhsType.isCoercibleTo(PDate.INSTANCE)) ) {
             return Longs.compare(this.getCodec().decodeLong(lhs, lhsOffset, lhsSortOrder), rhsType.getCodec()
                     .decodeLong(rhs, rhsOffset, rhsSortOrder));
         } else if (isDoubleOrFloat(this) && isDoubleOrFloat(rhsType)) { // native double to double comparison
@@ -678,32 +691,32 @@ public abstract class PDataType<T> implements DataType<T>, Comparable<PDataType<
     // Calculate the precision and scale of a raw decimal bytes. Returns the values as an int
     // array. The first value is precision, the second value is scale.
     // Default scope for testing
-    protected static int[] getDecimalPrecisionAndScale(byte[] bytes, int offset, int length) {
+    protected static int[] getDecimalPrecisionAndScale(byte[] bytes, int offset, int length, SortOrder sortOrder) {
         // 0, which should have no precision nor scale.
-        if (length == 1 && bytes[offset] == ZERO_BYTE) { return new int[] { 0, 0 }; }
-        int signum = ((bytes[offset] & 0x80) == 0) ? -1 : 1;
+        if (length == 1 && sortOrder.normalize(bytes[offset])  == ZERO_BYTE) { return new int[] { 0, 0 }; }
+        int signum = ((sortOrder.normalize(bytes[offset]) & 0x80) == 0) ? -1 : 1;
         int scale;
         int index;
         int digitOffset;
         if (signum == 1) {
-            scale = (byte)(((bytes[offset] & 0x7F) - 65) * -2);
+            scale = (byte)(((sortOrder.normalize(bytes[offset]) & 0x7F) - 65) * -2);
             index = offset + length;
             digitOffset = POS_DIGIT_OFFSET;
         } else {
-            scale = (byte)((~bytes[offset] - 65 - 128) * -2);
-            index = offset + length - (bytes[offset + length - 1] == NEG_TERMINAL_BYTE ? 1 : 0);
+            scale = (byte)((~sortOrder.normalize(bytes[offset]) - 65 - 128) * -2);
+            index = offset + length - (sortOrder.normalize(bytes[offset + length - 1]) == NEG_TERMINAL_BYTE ? 1 : 0);
             digitOffset = -NEG_DIGIT_OFFSET;
         }
         length = index - offset;
         int precision = 2 * (length - 1);
-        int d = signum * bytes[--index] - digitOffset;
+        int d = signum * sortOrder.normalize(bytes[--index]) - digitOffset;
         if (d % 10 == 0) { // trailing zero
             // drop trailing zero and compensate in the scale and precision.
             d /= 10;
             scale--;
             precision -= 1;
         }
-        d = signum * bytes[offset + 1] - digitOffset;
+        d = signum * sortOrder.normalize(bytes[offset + 1]) - digitOffset;
         if (d < 10) { // Leading single digit
             // Compensate in the precision.
             precision -= 1;
@@ -730,8 +743,21 @@ public abstract class PDataType<T> implements DataType<T>, Comparable<PDataType<
         return isCoercibleTo(targetType);
     }
 
-    public boolean isSizeCompatible(ImmutableBytesWritable ptr, Object value, PDataType srcType, Integer maxLength,
-            Integer scale, Integer desiredMaxLength, Integer desiredScale) {
+    /**
+     * Checks whether or not the value represented by value (or ptr if value is null) is compatible in terms
+     * of size with the desired max length and scale. The srcType must be coercible to this type.
+     * @param ptr bytes pointer for the value
+     * @param value object representation of the value. May be null in which case ptr will be used
+     * @param srcType the type of the value
+     * @param sortOrder the sort order of the value
+     * @param maxLength the max length of the source value or null if not applicable
+     * @param scale the scale of the source value or null if not applicable
+     * @param desiredMaxLength the desired max length for the value to be coerced
+     * @param desiredScale the desired scale for the value to be coerced 
+     * @return true if the value may be coerced without losing precision and false otherwise.
+     */
+    public boolean isSizeCompatible(ImmutableBytesWritable ptr, Object value, PDataType srcType, SortOrder sortOrder,
+            Integer maxLength, Integer scale, Integer desiredMaxLength, Integer desiredScale) {
         return true;
     }
 
@@ -1128,9 +1154,19 @@ public abstract class PDataType<T> implements DataType<T>, Comparable<PDataType<
         if (value == null) { return null; }
         for (PDataType type : PDataType.values()) {
             if (type.isArrayType()) {
-                PhoenixArray arr = (PhoenixArray)value;
-                if ((type.getSqlType() == arr.baseType.sqlType + PDataType.ARRAY_TYPE_BASE)
-                        && type.getJavaClass().isInstance(value)) { return type; }
+                if (value instanceof PhoenixArray) {
+                    PhoenixArray arr = (PhoenixArray)value;
+                    if ((type.getSqlType() == arr.baseType.sqlType + PDataType.ARRAY_TYPE_BASE)
+                            && type.getJavaClass().isInstance(value)) { return type; }
+                } else {
+                    Array arr = (Array) value;
+                    try {
+                        // Does the array's component type make sense for what we were told it is
+                        if (arr.getBaseType() == type.getSqlType() - PDataType.ARRAY_TYPE_BASE) {
+                            return type;
+                        }
+                    } catch (SQLException e) { /* Passthrough to fail */ }
+                }
             } else {
                 if (type.getJavaClass().isInstance(value)) { return type; }
             }

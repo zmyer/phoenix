@@ -1,9 +1,7 @@
 /*
- * Copyright 2014 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
- *distributed with this work for additional information
+ * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you maynot use this file except in compliance
@@ -22,6 +20,8 @@ package org.apache.phoenix.execute;
 import static com.google.common.collect.Lists.newArrayList;
 import static com.google.common.collect.Sets.newHashSet;
 import static java.util.Collections.singletonList;
+import static org.apache.phoenix.monitoring.GlobalClientMetrics.GLOBAL_MUTATION_BATCH_FAILED_COUNT;
+import static org.apache.phoenix.monitoring.MetricType.MUTATION_BATCH_FAILED_SIZE;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
@@ -55,10 +55,15 @@ import org.apache.phoenix.end2end.BaseOwnClusterIT;
 import org.apache.phoenix.hbase.index.Indexer;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.jdbc.PhoenixConnection;
+import org.apache.phoenix.monitoring.GlobalMetric;
+import org.apache.phoenix.monitoring.MetricType;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.TableRef;
+import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.ReadOnlyProps;
+import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -69,8 +74,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Maps;
 
 @RunWith(Parameterized.class)
-// Needs to extend BaseOwnClusterIT (and not BaseOwnClusterHBaseManagedTimeIT since table data 
-// is created and populated once in the constructor 
+// Needs to extend BaseOwnClusterIT due to installation of FailingRegionObserver coprocessor
 public class PartialCommitIT extends BaseOwnClusterIT {
     
 	private final String A_SUCESS_TABLE;
@@ -84,18 +88,24 @@ public class PartialCommitIT extends BaseOwnClusterIT {
     private static final byte[] ROW_TO_FAIL_DELETE_BYTES = Bytes.toBytes("fail me delete");
     private static final HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
     
+    @Override
+    @After
+    public void cleanUpAfterTest() throws Exception {}
+
     @BeforeClass
     public static void doSetup() throws Exception {
-        Map<String, String> serverProps = Maps.newHashMapWithExpectedSize(10);
+        Map<String, String> serverProps = Maps.newHashMapWithExpectedSize(3);
         serverProps.put("hbase.coprocessor.region.classes", FailingRegionObserver.class.getName());
         serverProps.put("hbase.coprocessor.abortonerror", "false");
         serverProps.put(Indexer.CHECK_VERSION_CONF_KEY, "false");
-        Map<String, String> clientProps = Collections.singletonMap(QueryServices.TRANSACTIONS_ENABLED, "true");
+        Map<String, String> clientProps = Maps.newHashMapWithExpectedSize(2);
+        clientProps.put(QueryServices.TRANSACTIONS_ENABLED, "true");
+        clientProps.put(QueryServices.COLLECT_REQUEST_LEVEL_METRICS, String.valueOf(true));
         setUpTestDriver(new ReadOnlyProps(serverProps.entrySet().iterator()), new ReadOnlyProps(clientProps.entrySet().iterator()));
         createTablesWithABitOfData();
     }
     
-    @Parameters(name="transactional = {0}")
+    @Parameters(name="PartialCommitIT_transactional={0}") // name is used by failsafe as file name in reports
     public static Collection<Boolean> data() {
         return Arrays.asList(false, true);
     }
@@ -147,6 +157,13 @@ public class PartialCommitIT extends BaseOwnClusterIT {
     @AfterClass
     public static void teardownCluster() throws Exception {
       TEST_UTIL.shutdownMiniCluster();
+    }
+    
+    @Before
+    public void resetGlobalMetrics() {
+        for (GlobalMetric m : PhoenixRuntime.getGlobalPhoenixClientMetrics()) {
+            m.reset();
+        }
     }
     
     @Test
@@ -245,7 +262,11 @@ public class PartialCommitIT extends BaseOwnClusterIT {
                 assertEquals(CommitException.class, sqle.getClass());
                 int[] uncommittedStatementIndexes = ((CommitException)sqle).getUncommittedStatementIndexes();
                 assertArrayEquals(expectedUncommittedStatementIndexes, uncommittedStatementIndexes);
+                Map<String, Map<MetricType, Long>> mutationWriteMetrics = PhoenixRuntime.getWriteMetricInfoForMutationsSinceLastReset(con);
+                assertEquals(expectedUncommittedStatementIndexes.length, mutationWriteMetrics.get(B_FAILURE_TABLE).get(MUTATION_BATCH_FAILED_SIZE).intValue());
+                assertEquals(expectedUncommittedStatementIndexes.length, GLOBAL_MUTATION_BATCH_FAILED_COUNT.getMetric().getTotalSum());
             }
+            
             
             // verify data in HBase
             for (int i = 0; i < countStatementsForVerification.size(); i++) {
@@ -268,12 +289,12 @@ public class PartialCommitIT extends BaseOwnClusterIT {
         // passing a null mutation state forces the connection.newMutationState() to be used to create the MutationState
         return new PhoenixConnection(phxCon, null) {
             @Override
-            protected MutationState newMutationState(int maxSize) {
-                return new MutationState(maxSize, this, mutations, null, null);
+            protected MutationState newMutationState(int maxSize, int maxSizeBytes) {
+                return new MutationState(maxSize, maxSizeBytes, this, mutations, false, null);
             };
         };
     }
-    
+
     public static class FailingRegionObserver extends SimpleRegionObserver {
         @Override
         public void prePut(ObserverContext<RegionCoprocessorEnvironment> c, Put put, WALEdit edit,

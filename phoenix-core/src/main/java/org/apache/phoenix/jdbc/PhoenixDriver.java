@@ -23,20 +23,13 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import javax.annotation.concurrent.GuardedBy;
 
+import com.google.common.cache.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
@@ -47,7 +40,6 @@ import org.apache.phoenix.query.HBaseFactoryProvider;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesImpl;
 import org.apache.phoenix.query.QueryServicesOptions;
-import org.apache.phoenix.util.PhoenixRuntime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -147,13 +139,40 @@ public final class PhoenixDriver extends PhoenixEmbeddedDriver {
     }
 
     // One entry per cluster here
-    private final ConcurrentMap<ConnectionInfo,ConnectionQueryServices> connectionQueryServicesMap = new ConcurrentHashMap<ConnectionInfo,ConnectionQueryServices>(3);
+    private final Cache<ConnectionInfo, ConnectionQueryServices> connectionQueryServicesCache =
+        initializeConnectionCache();
 
     public PhoenixDriver() { // for Squirrel
         // Use production services implementation
         super();
     }
-    
+
+    private Cache<ConnectionInfo, ConnectionQueryServices> initializeConnectionCache() {
+        Configuration config = HBaseFactoryProvider.getConfigurationFactory().getConfiguration();
+        int maxCacheDuration = config.getInt(QueryServices.CLIENT_CONNECTION_CACHE_MAX_DURATION_MILLISECONDS,
+            QueryServicesOptions.DEFAULT_CLIENT_CONNECTION_CACHE_MAX_DURATION);
+        RemovalListener<ConnectionInfo, ConnectionQueryServices> cacheRemovalListener =
+            new RemovalListener<ConnectionInfo, ConnectionQueryServices>() {
+                @Override
+                public void onRemoval(RemovalNotification<ConnectionInfo, ConnectionQueryServices> notification) {
+                    String connInfoIdentifier = notification.getKey().toString();
+                    logger.debug("Expiring " + connInfoIdentifier + " because of "
+                        + notification.getCause().name());
+
+                    try {
+                        notification.getValue().close();
+                    }
+                    catch (SQLException se) {
+                        logger.error("Error while closing expired cache connection " + connInfoIdentifier, se);
+                    }
+                }
+            };
+        return CacheBuilder.newBuilder()
+            .expireAfterAccess(maxCacheDuration, TimeUnit.MILLISECONDS)
+            .removalListener(cacheRemovalListener)
+            .build();
+    }
+
     // writes guarded by "this"
     private volatile QueryServices services;
     
@@ -206,42 +225,51 @@ public final class PhoenixDriver extends PhoenixEmbeddedDriver {
     }
     
     @Override
-    protected ConnectionQueryServices getConnectionQueryServices(String url, Properties info) throws SQLException {
+    protected ConnectionQueryServices getConnectionQueryServices(String url, final Properties info) throws SQLException {
         try {
             lockInterruptibly(LockMode.READ);
             checkClosed();
             ConnectionInfo connInfo = ConnectionInfo.create(url);
-            QueryServices services = getQueryServices();
-            ConnectionInfo normalizedConnInfo = connInfo.normalize(services.getProps());
-            ConnectionQueryServices connectionQueryServices = connectionQueryServicesMap.get(normalizedConnInfo);
-            if (connectionQueryServices == null) {
-                if (normalizedConnInfo.isConnectionless()) {
-                    connectionQueryServices = new ConnectionlessQueryServicesImpl(services, normalizedConnInfo, info);
+            SQLException sqlE = null;
+            boolean success = false;
+            final QueryServices services = getQueryServices();
+            ConnectionQueryServices connectionQueryServices = null;
+            // Also performs the Kerberos login if the URL/properties request this
+            final ConnectionInfo normalizedConnInfo = connInfo.normalize(services.getProps(), info);
+            try {
+                connectionQueryServices =
+                    connectionQueryServicesCache.get(normalizedConnInfo, new Callable<ConnectionQueryServices>() {
+                        @Override
+                        public ConnectionQueryServices call() throws Exception {
+                            ConnectionQueryServices connectionQueryServices;
+                            if (normalizedConnInfo.isConnectionless()) {
+                                connectionQueryServices = new ConnectionlessQueryServicesImpl(services, normalizedConnInfo, info);
+                            } else {
+                                connectionQueryServices = new ConnectionQueryServicesImpl(services, normalizedConnInfo, info);
+                            }
+
+                            return connectionQueryServices;
+                        }
+                    });
+
+                connectionQueryServices.init(url, info);
+                success = true;
+            } catch (ExecutionException ee){
+                if (ee.getCause() instanceof  SQLException) {
+                    sqlE = (SQLException) ee.getCause();
                 } else {
-                    connectionQueryServices = new ConnectionQueryServicesImpl(services, normalizedConnInfo, info);
-                }
-                ConnectionQueryServices prevValue = connectionQueryServicesMap.putIfAbsent(normalizedConnInfo, connectionQueryServices);
-                if (prevValue != null) {
-                    connectionQueryServices = prevValue;
+                    throw new SQLException(ee);
                 }
             }
-            String noUpgradeProp = info.getProperty(PhoenixRuntime.NO_UPGRADE_ATTRIB);
-            if (!Boolean.TRUE.equals(noUpgradeProp)) {
-                boolean success = false;
-                SQLException sqlE = null;
-                try {
-                    connectionQueryServices.init(url, info);
-                    success = true;
-                } catch (SQLException e) {
-                    sqlE = e;
-                }
-                finally {
-                    if (!success) {
-                        // Remove from map, as initialization failed
-                        connectionQueryServicesMap.remove(normalizedConnInfo);
-                        if (sqlE != null) {
-                            throw sqlE;
-                        }
+              catch (SQLException e) {
+                sqlE = e;
+            }
+            finally {
+                if (!success) {
+                    // Remove from map, as initialization failed
+                    connectionQueryServicesCache.invalidate(normalizedConnInfo);
+                    if (sqlE != null) {
+                        throw sqlE;
                     }
                 }
             }
@@ -320,4 +348,5 @@ public final class PhoenixDriver extends PhoenixEmbeddedDriver {
             closeLock.writeLock().unlock();
         }
     }
+
 }

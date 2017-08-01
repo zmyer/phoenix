@@ -114,8 +114,10 @@ public class WhereOptimizer {
     	boolean isSalted = nBuckets != null;
     	RowKeySchema schema = table.getRowKeySchema();
     	boolean isMultiTenant = tenantId != null && table.isMultiTenant();
+    	boolean isSharedIndex = table.getViewIndexId() != null;
+    	
     	if (isMultiTenant) {
-            tenantIdBytes = ScanUtil.getTenantIdBytes(schema, isSalted, tenantId);
+            tenantIdBytes = ScanUtil.getTenantIdBytes(schema, isSalted, tenantId, isSharedIndex);
     	}
 
         if (whereClause == null && (tenantId == null || !table.isMultiTenant()) && table.getViewIndexId() == null) {
@@ -187,6 +189,19 @@ public class WhereOptimizer {
             pkPos++;
         }
         
+        // Add unique index ID for shared indexes on views. This ensures
+        // that different indexes don't interleave.
+        if (hasViewIndex) {
+            byte[] viewIndexBytes = MetaDataUtil.getViewIndexIdDataType().toBytes(table.getViewIndexId());
+            KeyRange indexIdKeyRange = KeyRange.getKeyRange(viewIndexBytes);
+            cnf.add(singletonList(indexIdKeyRange));
+            if (hasMinMaxRange) {
+                System.arraycopy(viewIndexBytes, 0, minMaxRangePrefix, minMaxRangeOffset, viewIndexBytes.length);
+                minMaxRangeOffset += viewIndexBytes.length;
+            }
+            pkPos++;
+        }
+        
         // Add tenant data isolation for tenant-specific tables
         if (isMultiTenant) {
             KeyRange tenantIdKeyRange = KeyRange.getKeyRange(tenantIdBytes);
@@ -199,18 +214,6 @@ public class WhereOptimizer {
                     minMaxRangePrefix[minMaxRangeOffset] = SchemaUtil.getSeparatorByte(schema.rowKeyOrderOptimizable(), tenantIdBytes.length==0, f);
                     minMaxRangeOffset++;
                 }
-            }
-            pkPos++;
-        }
-        // Add unique index ID for shared indexes on views. This ensures
-        // that different indexes don't interleave.
-        if (hasViewIndex) {
-            byte[] viewIndexBytes = MetaDataUtil.getViewIndexIdDataType().toBytes(table.getViewIndexId());
-            KeyRange indexIdKeyRange = KeyRange.getKeyRange(viewIndexBytes);
-            cnf.add(singletonList(indexIdKeyRange));
-            if (hasMinMaxRange) {
-                System.arraycopy(viewIndexBytes, 0, minMaxRangePrefix, minMaxRangeOffset, viewIndexBytes.length);
-                minMaxRangeOffset += viewIndexBytes.length;
             }
             pkPos++;
         }
@@ -322,8 +325,14 @@ public class WhereOptimizer {
         final List<Integer> pkPositions = Lists.newArrayList();
         PTable table = context.getCurrentTable().getTable();
         for (int i = 0; i < expressions.size(); i++) {
+            Expression expression = expressions.get(i);
+            // TODO this is a temporary fix for PHOENIX-3029.
+            if (expression instanceof CoerceExpression
+                    && expression.getSortOrder() != expression.getChildren().get(0).getSortOrder()) {
+                continue;
+            }
             KeyExpressionVisitor visitor = new KeyExpressionVisitor(context, table);
-            KeyExpressionVisitor.KeySlots keySlots = expressions.get(i).accept(visitor);
+            KeyExpressionVisitor.KeySlots keySlots = expression.accept(visitor);
             int minPkPos = Integer.MAX_VALUE; 
             if (keySlots != null) {
                 Iterator<KeyExpressionVisitor.KeySlot> iterator = keySlots.iterator();
@@ -430,7 +439,12 @@ public class WhereOptimizer {
                 if (l.size() == 1) {
                     return l.get(0);
                 }
-                return new AndExpression(l);
+                try {
+                    return AndExpression.create(l);
+                } catch (SQLException e) {
+                    //shouldn't happen
+                    throw new RuntimeException(e);
+                }
             }
             return node;
         }
@@ -478,6 +492,10 @@ public class WhereOptimizer {
                 int initPosition = (table.getBucketNum() ==null ? 0 : 1) + (this.context.getConnection().getTenantId() != null && table.isMultiTenant() ? 1 : 0) + (table.getViewIndexId() == null ? 0 : 1);
                 if (initPosition == slot.getPKPosition()) {
                     minMaxRange = keyRange;
+                } else {
+                    // If we cannot set the minMaxRange, then we must not extract the expression since
+                    // we wouldn't be constraining the range at all based on it.
+                    extractNode = null;
                 }
             }
             return newKeyParts(slot, extractNode, keyRanges, minMaxRange);
@@ -741,12 +759,31 @@ public class WhereOptimizer {
                     	}
                     }
                 } else {
+                    boolean hasFirstSlot = true;
+                    boolean prevIsNull = false;
                     // TODO: Do the same optimization that we do for IN if the childSlots specify a fully qualified row key
                     for (KeySlot slot : childSlot) {
-                        // We have a nested OR with nothing for this slot, so continue
-                        if (slot == null) {
-                            return null; //If one childSlot does not have the PK columns, let Phoenix scan all the key ranges of the table. 
+                        if (hasFirstSlot) {
+                            // if the first slot is null, return null immediately
+                            if (slot == null) {
+                                return null;
+                            }
+                            // mark that we've handled the first slot
+                            hasFirstSlot = false;
                         }
+
+                        // now if current slot is the first one, it must not be null
+                        // if not the first, then it might be null, so check if all the rest are null
+                        if (slot == null) {
+                            prevIsNull = true;
+                            continue;
+                        } else {
+                            // current slot is not null but prev one is null, cannot OR these together (PHOENIX-3328)
+                            if (prevIsNull) {
+                                return null;
+                            }
+                        }
+
                         /*
                          * If we see a different PK column than before, we can't
                          * optimize it because our SkipScanFilter only handles
@@ -1330,11 +1367,28 @@ public class WhereOptimizer {
                     // For example: a < (1,2) is true if a = 1, so we need to switch
                     // the compare op to <= like this: a <= 1. Since we strip trailing nulls
                     // in the rvc, we don't need to worry about the a < (1,null) case.
-                    if (usedAllOfLHS && rvc.getChildren().size() < rhs.getChildren().size()) {
-                        if (op == CompareOp.LESS) {
-                            op = CompareOp.LESS_OR_EQUAL;
-                        } else if (op == CompareOp.GREATER_OR_EQUAL) {
-                            op = CompareOp.GREATER;
+                    if (usedAllOfLHS) {
+                        if (rvc.getChildren().size() < rhs.getChildren().size()) {
+                            if (op == CompareOp.LESS) {
+                                op = CompareOp.LESS_OR_EQUAL;
+                            } else if (op == CompareOp.GREATER_OR_EQUAL) {
+                                op = CompareOp.GREATER;
+                            }
+                        }
+                    } else {
+                        // If we're not using all of the LHS, we need to expand the range on either
+                        // side to take into account the rest of the LHS. For example:
+                        // WHERE (pk1, pk3) > ('a',1) AND pk1 = 'a'. In this case, we'll end up
+                        // only using (pk1) and ('a'), so if we use a > operator the expression
+                        // would end up as degenerate since we'd have a non inclusive range for
+                        // ('a'). By switching the operator to extend the range, we end up with
+                        // an ('a') inclusive range which is correct.
+                        if (rvc.getChildren().size() < rhs.getChildren().size()) {
+                            if (op == CompareOp.LESS) {
+                                op = CompareOp.LESS_OR_EQUAL;
+                            } else if (op == CompareOp.GREATER) {
+                                op = CompareOp.GREATER_OR_EQUAL;
+                            }
                         }
                     }
                 }

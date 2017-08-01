@@ -16,28 +16,19 @@ import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.phoenix.expression.Determinism;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.LiteralExpression;
-import org.apache.phoenix.expression.function.CurrentDateFunction;
-import org.apache.phoenix.expression.function.CurrentTimeFunction;
-import org.apache.phoenix.expression.function.FunctionExpression;
+import org.apache.phoenix.schema.ColumnRef;
+import org.apache.phoenix.schema.PColumn;
+import org.apache.phoenix.schema.TableRef;
+import org.apache.phoenix.schema.types.PBoolean;
 import org.apache.phoenix.schema.types.PDataType;
 
-import com.google.common.collect.Lists;
-
 public class ExpressionUtil {
-
-	@SuppressWarnings("unchecked")
-	private static final List<Class<? extends FunctionExpression>> OVERRIDE_LITERAL_FUNCTIONS = Lists
-			.<Class<? extends FunctionExpression>> newArrayList(
-					CurrentDateFunction.class, CurrentTimeFunction.class);
-
 	private ExpressionUtil() {
 	}
 
 	public static boolean isConstant(Expression expression) {
 		return (expression.isStateless() && (expression.getDeterminism() == Determinism.ALWAYS
-				|| expression.getDeterminism() == Determinism.PER_STATEMENT 
-				// TODO remove this in 3.4/4.4 (need to support clients on 3.1/4.1)
-				|| OVERRIDE_LITERAL_FUNCTIONS.contains(expression.getClass())));
+				|| expression.getDeterminism() == Determinism.PER_STATEMENT));
 	}
 
     public static LiteralExpression getConstantExpression(Expression expression, ImmutableBytesWritable ptr)
@@ -56,6 +47,25 @@ public class ExpressionUtil {
 
     public static LiteralExpression getNullExpression(Expression expression) throws SQLException {
         return LiteralExpression.newConstant(null, expression.getDataType(), expression.getDeterminism());
+    }
+    
+    public static boolean evaluatesToTrue(Expression expression) {
+        if (isConstant(expression)) {
+            ImmutableBytesWritable ptr = new ImmutableBytesWritable();
+            expression.evaluate(null, ptr);
+            return Boolean.TRUE.equals(PBoolean.INSTANCE.toObject(ptr));
+        }
+        return false;
+    }
+
+    public static boolean isPkPositionChanging(TableRef tableRef, List<Expression> projectedExpressions) throws SQLException {
+        for (int i = 0; i < tableRef.getTable().getPKColumns().size(); i++) {
+            PColumn column = tableRef.getTable().getPKColumns().get(i);
+            Expression source = projectedExpressions.get(i);
+            if (source == null || !source
+                    .equals(new ColumnRef(tableRef, column.getPosition()).newColumnExpression())) { return true; }
+        }
+        return false;
     }
 
 }

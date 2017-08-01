@@ -37,7 +37,7 @@ import org.apache.phoenix.util.PropertiesUtil;
 import org.junit.Test;
 
 
-public class UpsertSelectAutoCommitIT extends BaseHBaseManagedTimeTableReuseIT {
+public class UpsertSelectAutoCommitIT extends ParallelStatsDisabledIT {
 
     public UpsertSelectAutoCommitIT() {
     }
@@ -47,7 +47,7 @@ public class UpsertSelectAutoCommitIT extends BaseHBaseManagedTimeTableReuseIT {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(true);
-        String atable = generateRandomString();
+        String atable = generateUniqueName();
         conn.createStatement().execute("CREATE TABLE " + atable
             + " (ORGANIZATION_ID CHAR(15) NOT NULL, ENTITY_ID CHAR(15) NOT NULL, A_STRING VARCHAR\n"
             +
@@ -77,7 +77,7 @@ public class UpsertSelectAutoCommitIT extends BaseHBaseManagedTimeTableReuseIT {
         assertEquals(A_VALUE, rs.getString(2));
         assertFalse(rs.next());
 
-        String atable2 = generateRandomString();
+        String atable2 = generateUniqueName();
         conn.createStatement().execute("CREATE TABLE " + atable2
             + " (ORGANIZATION_ID CHAR(15) NOT NULL, ENTITY_ID CHAR(15) NOT NULL, A_STRING VARCHAR\n"
             +
@@ -98,7 +98,7 @@ public class UpsertSelectAutoCommitIT extends BaseHBaseManagedTimeTableReuseIT {
     @Test
     public void testDynamicUpsertSelect() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String tableName = generateRandomString();
+        String tableName = generateUniqueName();
         String cursorDDL = " CREATE TABLE IF NOT EXISTS " + tableName
             + " (ORGANIZATION_ID VARCHAR(15) NOT NULL, \n"
                 + "QUERY_ID VARCHAR(15) NOT NULL, \n"
@@ -107,7 +107,7 @@ public class UpsertSelectAutoCommitIT extends BaseHBaseManagedTimeTableReuseIT {
                 + "SALT_BUCKETS = 4";
         conn.createStatement().execute(cursorDDL);
 
-        String tableName2 = generateRandomString();
+        String tableName2 = generateUniqueName();
         String dataTableDDL = "CREATE TABLE IF NOT EXISTS " + tableName2 +
                 "(" +
                 "ORGANIZATION_ID CHAR(15) NOT NULL, " +
@@ -152,13 +152,13 @@ public class UpsertSelectAutoCommitIT extends BaseHBaseManagedTimeTableReuseIT {
     @Test
     public void testUpsertSelectDoesntSeeUpsertedData() throws Exception {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(QueryServices.MUTATE_BATCH_SIZE_ATTRIB, Integer.toString(3));
+        props.setProperty(QueryServices.MUTATE_BATCH_SIZE_BYTES_ATTRIB, Integer.toString(512));
         props.setProperty(QueryServices.SCAN_CACHE_SIZE_ATTRIB, Integer.toString(3));
         props.setProperty(QueryServices.SCAN_RESULT_CHUNK_SIZE, Integer.toString(3));
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(true);
         conn.createStatement().execute("CREATE SEQUENCE keys");
-        String tableName = generateRandomString();
+        String tableName = generateUniqueName();
         conn.createStatement().execute(
             "CREATE TABLE " + tableName + " (pk INTEGER PRIMARY KEY, val INTEGER)");
 

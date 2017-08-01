@@ -1,9 +1,7 @@
 /*
- * Copyright 2010 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
- *distributed with this work for additional information
+ * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you maynot use this file except in compliance
@@ -23,7 +21,6 @@ import static org.apache.phoenix.util.TestUtil.A_VALUE;
 import static org.apache.phoenix.util.TestUtil.B_VALUE;
 import static org.apache.phoenix.util.TestUtil.C_VALUE;
 import static org.apache.phoenix.util.TestUtil.E_VALUE;
-import static org.apache.phoenix.util.TestUtil.ROW3;
 import static org.apache.phoenix.util.TestUtil.ROW5;
 import static org.apache.phoenix.util.TestUtil.ROW6;
 import static org.apache.phoenix.util.TestUtil.ROW7;
@@ -33,117 +30,36 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.sql.Connection;
-import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 
-import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.PropertiesUtil;
-import org.apache.phoenix.util.ReadOnlyProps;
-import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-
 
 @RunWith(Parameterized.class)
 public class GroupByIT extends BaseQueryIT {
 
-    public GroupByIT(String indexDDL) {
-        super(indexDDL);
+    public GroupByIT(String indexDDL, boolean mutable, boolean columnEncoded) {
+        super(indexDDL, mutable, columnEncoded, true);
     }
     
-    @Parameters(name="{0}")
+    @Parameters(name="GroupByIT_{index}") // name is used by failsafe as file name in reports
     public static Collection<Object> data() {
         return QueryIT.data();
     }
     
-    @BeforeClass
-    @Shadower(classBeingShadowed = BaseQueryIT.class)
-    public static void doSetup() throws Exception {
-    	Map<String,String> props = Maps.newHashMapWithExpectedSize(3);
-    	props.put(QueryServices.DEFAULT_KEEP_DELETED_CELLS_ATTRIB, "true");
-    	BaseQueryIT.doSetup(props);
-    }
-    
-    @SuppressWarnings("unchecked")
-    @Test
-    public void testGroupByCondition() throws Exception {
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 20));
-        Connection conn = DriverManager.getConnection(getUrl(), props);
-        PreparedStatement statement = conn.prepareStatement("SELECT count(*) FROM aTable WHERE organization_id=? GROUP BY a_integer=6");
-        statement.setString(1, tenantId);
-        ResultSet rs = statement.executeQuery();
-        assertValueEqualsResultSet(rs, Arrays.<Object>asList(1L,8L));
-        try {
-            statement = conn.prepareStatement("SELECT count(*),a_integer=6 FROM aTable WHERE organization_id=? and (a_integer IN (5,6) or a_integer is null) GROUP BY a_integer=6");
-            statement.setString(1, tenantId);
-            rs = statement.executeQuery();
-            List<List<Object>> expectedResults = Lists.newArrayList(
-                    Arrays.<Object>asList(1L,false),
-                    Arrays.<Object>asList(1L,true));
-            assertValuesEqualsResultSet(rs, expectedResults);
-        } finally {
-            conn.close();
-        }
-
-        
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 40));
-        conn = DriverManager.getConnection(getUrl(), props);
-        try {
-            statement = conn.prepareStatement("UPSERT into aTable(organization_id,entity_id,a_integer) values(?,?,null)");
-            statement.setString(1, tenantId);
-            statement.setString(2, ROW3);
-            statement.executeUpdate();
-            conn.commit();
-        } finally {
-            conn.close();
-        }
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 60));
-        conn = DriverManager.getConnection(getUrl(), props);
-        statement = conn.prepareStatement("SELECT count(*) FROM aTable WHERE organization_id=? GROUP BY a_integer=6");
-        statement.setString(1, tenantId);
-        rs = statement.executeQuery();
-        assertValueEqualsResultSet(rs, Arrays.<Object>asList(1L,1L,7L));
-        statement = conn.prepareStatement("SELECT a_integer, entity_id FROM aTable WHERE organization_id=? and (a_integer IN (5,6) or a_integer is null)");
-        statement.setString(1, tenantId);
-        rs = statement.executeQuery();
-        List<List<Object>> expectedResults = Lists.newArrayList(
-                Arrays.<Object>asList(null,ROW3),
-                Arrays.<Object>asList(5,ROW5),
-                Arrays.<Object>asList(6,ROW6));
-        assertValuesEqualsResultSet(rs, expectedResults);
-        try {
-            statement = conn.prepareStatement("SELECT count(*),a_integer=6 FROM aTable WHERE organization_id=? and (a_integer IN (5,6) or a_integer is null) GROUP BY a_integer=6");
-            statement.setString(1, tenantId);
-            rs = statement.executeQuery();
-            expectedResults = Lists.newArrayList(
-                    Arrays.<Object>asList(1L,null),
-                    Arrays.<Object>asList(1L,false),
-                    Arrays.<Object>asList(1L,true));
-            assertValuesEqualsResultSet(rs, expectedResults);
-        } finally {
-            conn.close();
-        }
-    }
-    
     @Test
     public void testNoWhereScan() throws Exception {
-        String query = "SELECT y_integer FROM aTable";
+        String query = "SELECT y_integer FROM " + tableName;
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -170,7 +86,7 @@ public class GroupByIT extends BaseQueryIT {
     @Test
     public void testGroupedAggregation() throws Exception {
         // Tests that you don't get an ambiguous column exception when using the same alias as the column name
-        String query = "SELECT a_string as a_string, count(1), 'foo' FROM atable WHERE organization_id=? GROUP BY a_string";
+        String query = "SELECT a_string as a_string, count(1), 'foo' FROM " + tableName + " WHERE organization_id=? GROUP BY a_string";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -198,7 +114,7 @@ public class GroupByIT extends BaseQueryIT {
 
     @Test
     public void testDistinctGroupedAggregation() throws Exception {
-        String query = "SELECT DISTINCT a_string, count(1), 'foo' FROM atable WHERE organization_id=? GROUP BY a_string, b_string ORDER BY a_string, count(1)";
+        String query = "SELECT DISTINCT a_string, count(1), 'foo' FROM " + tableName + " WHERE organization_id=? GROUP BY a_string, b_string ORDER BY a_string, count(1)";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -240,7 +156,7 @@ public class GroupByIT extends BaseQueryIT {
 
     @Test
     public void testDistinctLimitedGroupedAggregation() throws Exception {
-        String query = "SELECT /*+ NO_INDEX */ DISTINCT a_string, count(1), 'foo' FROM atable WHERE organization_id=? GROUP BY a_string, b_string ORDER BY count(1) desc,a_string LIMIT 2";
+        String query = "SELECT /*+ NO_INDEX */ DISTINCT a_string, count(1), 'foo' FROM " + tableName + " WHERE organization_id=? GROUP BY a_string, b_string ORDER BY count(1) desc,a_string LIMIT 2";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -278,7 +194,7 @@ public class GroupByIT extends BaseQueryIT {
 
     @Test
     public void testDistinctUngroupedAggregation() throws Exception {
-        String query = "SELECT DISTINCT count(1), 'foo' FROM atable WHERE organization_id=?";
+        String query = "SELECT DISTINCT count(1), 'foo' FROM " + tableName + " WHERE organization_id=?";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -297,7 +213,7 @@ public class GroupByIT extends BaseQueryIT {
 
     @Test
     public void testGroupedLimitedAggregation() throws Exception {
-        String query = "SELECT a_string, count(1) FROM atable WHERE organization_id=? GROUP BY a_string LIMIT 2";
+        String query = "SELECT a_string, count(1) FROM " + tableName + " WHERE organization_id=? GROUP BY a_string LIMIT 2";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -320,8 +236,8 @@ public class GroupByIT extends BaseQueryIT {
     @Test
     public void testPointInTimeGroupedAggregation() throws Exception {
         String updateStmt = 
-            "upsert into " +
-            "ATABLE VALUES ('" + tenantId + "','" + ROW5 + "','" + C_VALUE +"')";
+            "upsert into " + tableName + 
+            " VALUES ('" + tenantId + "','" + ROW5 + "','" + C_VALUE +"')";
         // Override value that was set at creation time
         String url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 1); // Run query at timestamp 5
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
@@ -337,8 +253,8 @@ public class GroupByIT extends BaseQueryIT {
         upsertConn = DriverManager.getConnection(url, props);
         upsertConn.setAutoCommit(true); // Test auto commit
         updateStmt = 
-            "upsert into " +
-            "ATABLE VALUES (?, ?, ?)";
+            "upsert into " + tableName +
+            " VALUES (?, ?, ?)";
         // Insert all rows at ts
         PreparedStatement pstmt = upsertConn.prepareStatement(updateStmt);
         pstmt.setString(1, tenantId);
@@ -347,7 +263,7 @@ public class GroupByIT extends BaseQueryIT {
         pstmt.execute(); // should commit too
         upsertConn.close();
         
-        String query = "SELECT a_string, count(1) FROM atable WHERE organization_id='" + tenantId + "' GROUP BY a_string";
+        String query = "SELECT a_string, count(1) FROM " + tableName + " WHERE organization_id='" + tenantId + "' GROUP BY a_string";
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2));
         Connection conn = DriverManager.getConnection(getUrl(), props);
         Statement statement = conn.createStatement();
@@ -367,7 +283,7 @@ public class GroupByIT extends BaseQueryIT {
 
     @Test
     public void testUngroupedAggregation() throws Exception {
-        String query = "SELECT count(1) FROM atable WHERE organization_id=? and a_string = ?";
+        String query = "SELECT count(1) FROM " + tableName + " WHERE organization_id=? and a_string = ?";
         String url = getUrl();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 5)); // Execute query at ts + 5
@@ -401,7 +317,7 @@ public class GroupByIT extends BaseQueryIT {
 
     @Test
     public void testUngroupedAggregationNoWhere() throws Exception {
-        String query = "SELECT count(*) FROM atable";
+        String query = "SELECT count(*) FROM " + tableName;
         String url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 5); // Run query at timestamp 5
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
@@ -424,8 +340,8 @@ public class GroupByIT extends BaseQueryIT {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection upsertConn = DriverManager.getConnection(url, props);
         String updateStmt = 
-            "upsert into " +
-            "ATABLE(" +
+            "upsert into " + tableName + 
+            " (" +
             "    ORGANIZATION_ID, " +
             "    ENTITY_ID, " +
             "    A_STRING) " +
@@ -455,7 +371,7 @@ public class GroupByIT extends BaseQueryIT {
         stmt.execute();
         upsertConn.close();
         
-        String query = "SELECT count(1) FROM atable WHERE organization_id=? and a_string = ?";
+        String query = "SELECT count(1) FROM " + tableName + " WHERE organization_id=? and a_string = ?";
         // Specify CurrentSCN on URL with extra stuff afterwards (which should be ignored)
         url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 2) + ";foo=bar"; // Run query at timestamp 2 
         Connection conn = DriverManager.getConnection(url, props);
@@ -472,8 +388,8 @@ public class GroupByIT extends BaseQueryIT {
     @Test
     public void testPointInTimeUngroupedLimitedAggregation() throws Exception {
         String updateStmt = 
-            "upsert into " +
-            "ATABLE(" +
+            "upsert into " + tableName +
+            " (" +
             "    ORGANIZATION_ID, " +
             "    ENTITY_ID, " +
             "    A_STRING) " +
@@ -507,7 +423,7 @@ public class GroupByIT extends BaseQueryIT {
         stmt.execute();
         upsertConn.close();
 
-        String query = "SELECT count(1) FROM atable WHERE organization_id=? and a_string = ? LIMIT 3";
+        String query = "SELECT count(1) FROM " + tableName + " WHERE organization_id=? and a_string = ? LIMIT 3";
         // Specify CurrentSCN on URL with extra stuff afterwards (which should be ignored)
         url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 2) + ";foo=bar"; // Run query at timestamp 2 
         Connection conn = DriverManager.getConnection(url, props);
@@ -522,78 +438,25 @@ public class GroupByIT extends BaseQueryIT {
     }
 
     @Test
-    public void testPointInTimeDeleteUngroupedAggregation() throws Exception {
-        String updateStmt = 
-            "upsert into " +
-            "ATABLE(" +
-            "    ORGANIZATION_ID, " +
-            "    ENTITY_ID, " +
-            "    A_STRING) " +
-            "VALUES (?, ?, ?)";
-        
-        // Override value that was set at creation time
-        String url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 1); // Run query at timestamp 5
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-
-        // Remove column value at ts + 1 (i.e. equivalent to setting the value to null)
-        Connection conn = DriverManager.getConnection(url, props);
-        PreparedStatement stmt = conn.prepareStatement(updateStmt);
-        stmt.setString(1, tenantId);
-        stmt.setString(2, ROW7);
-        stmt.setString(3, null);
-        stmt.execute();
-        
-        // Delete row 
-        stmt = conn.prepareStatement("delete from atable where organization_id=? and entity_id=?");
-        stmt.setString(1, tenantId);
-        stmt.setString(2, ROW5);
-        stmt.execute();
-        conn.commit();
-        conn.close();
-        
-        // Delete row at timestamp 3. This should not be seen by the query executing
-        // Remove column value at ts + 1 (i.e. equivalent to setting the value to null)
-        Connection futureConn = DriverManager.getConnection(getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 3), props);
-        stmt = futureConn.prepareStatement("delete from atable where organization_id=? and entity_id=?");
-        stmt.setString(1, tenantId);
-        stmt.setString(2, ROW6);
-        stmt.execute();
-        futureConn.commit();
-        futureConn.close();
-
-        String query = "SELECT count(1) FROM atable WHERE organization_id=? and a_string = ?";
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
-        conn = DriverManager.getConnection(getUrl(), props);
-        PreparedStatement statement = conn.prepareStatement(query);
-        statement.setString(1, tenantId);
-        statement.setString(2, B_VALUE);
-        ResultSet rs = statement.executeQuery();
-        assertTrue(rs.next());
-        assertEquals(2, rs.getLong(1));
-        assertFalse(rs.next());
-        conn.close();
-    }
-
-
-    @Test
     public void testGroupByWithIntegerDivision1() throws Exception {
         long ts = nextTimestamp();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10));
         Connection conn = DriverManager.getConnection(getUrl(), props);
-        String ddl = "create table test1(time integer not null, hostname varchar not null,usage float,period integer constraint pk PRIMARY KEY(time, hostname))";
+        String table = generateUniqueName();
+        String ddl = "create table " + table + "(\"time\" integer not null, hostname varchar not null,usage float,period integer constraint pk PRIMARY KEY(\"time\", hostname))";
         conn.createStatement().execute(ddl);
         conn.close();
 
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
         conn = DriverManager.getConnection(getUrl(), props);
-        PreparedStatement stmt = conn.prepareStatement("upsert into test1 values(1439853462,'qa9',8.27,1439853462)");
+        PreparedStatement stmt = conn.prepareStatement("upsert into " + table + " values(1439853462,'qa9',8.27,1439853462)");
         stmt.execute();
-        stmt = conn.prepareStatement("upsert into test1 values(1439853461,'qa9',8.27,1439853362)");
+        stmt = conn.prepareStatement("upsert into " + table + " values(1439853461,'qa9',8.27,1439853362)");
         stmt.execute();
-        stmt = conn.prepareStatement("upsert into test1 values(1439853461,'qa9',5.27,1439853461)");
+        stmt = conn.prepareStatement("upsert into " + table + " values(1439853461,'qa9',5.27,1439853461)");
         stmt.execute();
-        stmt = conn.prepareStatement("upsert into test1 values(1439853451,'qa9',4.27,1439853451)");
+        stmt = conn.prepareStatement("upsert into " + table + " values(1439853451,'qa9',4.27,1439853451)");
         stmt.execute();
         conn.commit();
         conn.close();
@@ -601,7 +464,7 @@ public class GroupByIT extends BaseQueryIT {
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 40));
         conn = DriverManager.getConnection(getUrl(), props);
         ResultSet rs;
-        stmt = conn.prepareStatement("select time/10 as tm, hostname, avg(usage) from test1 group by hostname, tm");
+        stmt = conn.prepareStatement("select \"time\"/10 as tm, hostname, avg(usage) from " + table + " group by hostname, tm");
         rs = stmt.executeQuery();
         assertTrue(rs.next());
         assertEquals(143985345, rs.getInt(1));
@@ -617,19 +480,20 @@ public class GroupByIT extends BaseQueryIT {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10));
         Connection conn = DriverManager.getConnection(getUrl(), props);
-        String ddl = "create table test1(time integer not null, hostname varchar not null,usage float,period integer constraint pk PRIMARY KEY(time, hostname))";
+        String table = generateUniqueName();
+        String ddl = "create table " + table + "(\"time\" integer not null, hostname varchar not null,usage float,period integer constraint pk PRIMARY KEY(\"time\", hostname))";
         conn.createStatement().execute(ddl);
         conn.close();
 
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
         conn = DriverManager.getConnection(getUrl(), props);
-        PreparedStatement stmt = conn.prepareStatement("upsert into test1 values(1439853462,'qa9',8.27,1439853462)");
+        PreparedStatement stmt = conn.prepareStatement("upsert into " + table + " values(1439853462,'qa9',8.27,1439853462)");
         stmt.execute();
-        stmt = conn.prepareStatement("upsert into test1 values(1439853461,'qa9',8.27,1439853362)");
+        stmt = conn.prepareStatement("upsert into " + table + " values(1439853461,'qa9',8.27,1439853362)");
         stmt.execute();
-        stmt = conn.prepareStatement("upsert into test1 values(1439853461,'qa9',5.27,1439853461)");
+        stmt = conn.prepareStatement("upsert into " + table + " values(1439853461,'qa9',5.27,1439853461)");
         stmt.execute();
-        stmt = conn.prepareStatement("upsert into test1 values(1439853451,'qa9',4.27,1439853451)");
+        stmt = conn.prepareStatement("upsert into " + table + " values(1439853451,'qa9',4.27,1439853451)");
         stmt.execute();
         conn.commit();
         conn.close();
@@ -637,7 +501,7 @@ public class GroupByIT extends BaseQueryIT {
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 40));
         conn = DriverManager.getConnection(getUrl(), props);
         ResultSet rs;
-        stmt = conn.prepareStatement("select period/10 as tm, hostname, avg(usage) from test1 group by hostname, tm");
+        stmt = conn.prepareStatement("select period/10 as tm, hostname, avg(usage) from " + table + " group by hostname, tm");
         rs = stmt.executeQuery();
         assertTrue(rs.next());
         assertEquals(143985345, rs.getInt(1));

@@ -66,12 +66,12 @@ public class NonTxIndexBuilder extends BaseIndexBuilder {
     	// create a state manager, so we can manage each batch
         LocalTableState state = new LocalTableState(env, localTable, mutation);
         // build the index updates for each group
-        IndexUpdateManager manager = new IndexUpdateManager();
+        IndexUpdateManager manager = new IndexUpdateManager(indexMetaData);
 
         batchMutationAndAddUpdates(manager, state, mutation, indexMetaData);
 
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("Found index updates for Mutation: " + mutation + "\n" + manager);
+        if (LOG.isTraceEnabled()) {
+            LOG.trace("Found index updates for Mutation: " + mutation + "\n" + manager);
         }
 
         return manager.toMap();
@@ -98,7 +98,7 @@ public class NonTxIndexBuilder extends BaseIndexBuilder {
         Collection<Batch> batches = createTimestampBatchesFromMutation(m);
 
         // go through each batch of keyvalues and build separate index entries for each
-        boolean cleanupCurrentState = true;
+        boolean cleanupCurrentState = !indexMetaData.isImmutableRows();
         for (Batch batch : batches) {
             /*
              * We have to split the work between the cleanup and the update for each group because when we update the
@@ -215,7 +215,9 @@ public class NonTxIndexBuilder extends BaseIndexBuilder {
         // determine if we need to make any cleanup given the pending update.
         long batchTs = batch.getTimestamp();
         state.setPendingUpdates(batch.getKvs());
-        addCleanupForCurrentBatch(updateMap, batchTs, state, indexMetaData);
+        if (!indexMetaData.isImmutableRows()) {
+            addCleanupForCurrentBatch(updateMap, batchTs, state, indexMetaData);
+        }
 
         // A.2 do a single pass first for the updates to the current state
         state.applyPendingUpdates();
@@ -381,6 +383,9 @@ public class NonTxIndexBuilder extends BaseIndexBuilder {
      */
     protected void addDeleteUpdatesToMap(IndexUpdateManager updateMap, LocalTableState state, long ts, IndexMetaData indexMetaData)
             throws IOException {
+        if (indexMetaData.isImmutableRows()) {
+            return;
+        }
         Iterable<IndexUpdate> cleanup = codec.getIndexDeletes(state, indexMetaData);
         if (cleanup != null) {
             for (IndexUpdate d : cleanup) {

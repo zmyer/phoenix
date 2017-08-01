@@ -18,11 +18,24 @@
 package org.apache.phoenix.expression.function;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.util.regex.AbstractBasePattern;
 import org.apache.phoenix.expression.util.regex.JavaPattern;
+import org.apache.phoenix.schema.types.PLong;
+import org.apache.phoenix.schema.types.PVarchar;
+import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
+import org.apache.phoenix.parse.FunctionParseNode.Argument;
+import org.apache.phoenix.parse.FunctionParseNode.FunctionClassType;
 
+@BuiltInFunction(name=RegexpSubstrFunction.NAME,
+        args= {
+                @Argument(allowedTypes={PVarchar.class}),
+                @Argument(allowedTypes={PVarchar.class}),
+                @Argument(allowedTypes={PLong.class}, defaultValue="1")},
+        classType = FunctionClassType.DERIVED
+)
 public class StringBasedRegexpSubstrFunction extends RegexpSubstrFunction {
     public StringBasedRegexpSubstrFunction() {
     }
@@ -33,6 +46,6 @@ public class StringBasedRegexpSubstrFunction extends RegexpSubstrFunction {
 
     @Override
     protected AbstractBasePattern compilePatternSpec(String value) {
-        return new JavaPattern(value);
+        return new JavaPattern(value, Pattern.DOTALL);
     }
 }

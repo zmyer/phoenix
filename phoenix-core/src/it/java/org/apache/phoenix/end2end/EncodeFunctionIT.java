@@ -26,6 +26,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.Collections;
 import java.util.List;
 
@@ -35,7 +36,7 @@ import org.junit.Test;
 
 import com.google.common.collect.Lists;
 
-public class EncodeFunctionIT extends BaseHBaseManagedTimeIT {
+public class EncodeFunctionIT extends ParallelStatsDisabledIT {
 
     /**
      * Helper to test ENCODE function
@@ -46,13 +47,13 @@ public class EncodeFunctionIT extends BaseHBaseManagedTimeIT {
      *            name of column to query
      * @param sortOrder
      *            sort order of the pk column
-     * @param expectedOutput
+     * @param expectedOutputList
      *            expected output of ENCODE function
      */
-    private void testEncodeHelper(Connection conn, String colName, List<String> expectedOutputList, String sortOrder)
+    private void testEncodeHelper(Connection conn, String tableName, String colName, List<String> expectedOutputList, String sortOrder)
         throws Exception {
         for (int id = 0; id < expectedOutputList.size(); ++id) {
-            String sql = String.format("SELECT ENCODE(%s, 'base62') FROM TEST_TABLE_%s WHERE id=?", colName, sortOrder);
+            String sql = String.format("SELECT ENCODE(%s, 'base62') FROM " + tableName + "_%s WHERE id=?", colName, sortOrder);
             PreparedStatement stmt = conn.prepareStatement(sql);
             stmt.setInt(1, id);
 
@@ -74,9 +75,9 @@ public class EncodeFunctionIT extends BaseHBaseManagedTimeIT {
      *            expected output of ENCODE function
      */
     private void testEncode(Connection conn, List<Object> inputList, List<String> expectedOutputList) throws Exception {
-        TestUtil.initTables(conn, "BIGINT", inputList);
-        testEncodeHelper(conn, "pk", expectedOutputList, "ASC");
-        testEncodeHelper(conn, "pk", expectedOutputList, "DESC");
+        String tableName = TestUtil.initTables(conn, "BIGINT", inputList);
+        testEncodeHelper(conn, tableName, "pk", expectedOutputList, "ASC");
+        testEncodeHelper(conn, tableName, "pk", expectedOutputList, "DESC");
     }
 
     @Test
@@ -89,45 +90,67 @@ public class EncodeFunctionIT extends BaseHBaseManagedTimeIT {
     @Test
     public void testEncodeNullInput() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        TestUtil.initTables(conn, "BIGINT", Collections.<Object> singletonList(0l));
-        testEncodeHelper(conn, "kv", Collections.<String> singletonList(null), "ASC");
-        testEncodeHelper(conn, "kv", Collections.<String> singletonList(null), "DESC");
+        String tableName = TestUtil.initTables(conn, "BIGINT", Collections.<Object> singletonList(0l));
+        testEncodeHelper(conn, tableName, "kv", Collections.<String> singletonList(null), "ASC");
+        testEncodeHelper(conn, tableName, "kv", Collections.<String> singletonList(null), "DESC");
     }
 
     @Test
     public void testUpperCaseEncodingType() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String ddl = "CREATE TABLE TEST_TABLE ( pk VARCHAR(10) NOT NULL CONSTRAINT PK PRIMARY KEY (pk))";
+        String tableName = generateUniqueName();
+        String ddl = "CREATE TABLE " + tableName + " ( pk VARCHAR(10) NOT NULL CONSTRAINT PK PRIMARY KEY (pk))";
 
         conn.createStatement().execute(ddl);
-        PreparedStatement ps = conn.prepareStatement("UPSERT INTO TEST_TABLE (pk) VALUES (?)");
+        PreparedStatement ps = conn.prepareStatement("UPSERT INTO " + tableName + " (pk) VALUES (?)");
         ps.setString(1, "1");
 
         ps.execute();
         conn.commit();
 
-        ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM TEST_TABLE WHERE pk = ENCODE(1, 'BASE62')");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM " + tableName + " WHERE pk = ENCODE(1, 'BASE62')");
         assertTrue(rs.next());
     }
 
     @Test
     public void testNullEncodingType() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String ddl = "CREATE TABLE TEST_TABLE ( pk VARCHAR(10) NOT NULL CONSTRAINT PK PRIMARY KEY (pk))";
+        String tableName = generateUniqueName();
+        String ddl = "CREATE TABLE " + tableName + " ( pk VARCHAR(10) NOT NULL CONSTRAINT PK PRIMARY KEY (pk))";
         conn.createStatement().execute(ddl);
 
-        ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM TEST_TABLE WHERE pk = ENCODE(1, NULL)");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM " + tableName + " WHERE pk = ENCODE(1, NULL)");
+        assertFalse(rs.next());
+    }
+    
+    @Test
+    public void testNullValue() throws Exception {
+        Connection conn = DriverManager.getConnection(getUrl());
+        String tableName = generateUniqueName();
+        String ddl = "CREATE TABLE " + tableName + " ( pk VARCHAR(10) NOT NULL, val INTEGER CONSTRAINT PK PRIMARY KEY (pk))";
+        conn.createStatement().execute(ddl);
+        PreparedStatement ps = conn.prepareStatement("UPSERT INTO " + tableName + " (pk,val) VALUES (?,?)");
+        ps.setString(1, "1");
+        ps.setNull(2, Types.INTEGER);
+        ps.execute();
+        conn.commit();
+
+        ResultSet rs = conn.createStatement().executeQuery("SELECT ENCODE(val, 'BASE62') FROM " + tableName);
+        assertTrue(rs.next());
+        rs.getInt(1);
+        assertTrue(rs.wasNull());
         assertFalse(rs.next());
     }
 
     @Test
     public void testUnsupportedEncodingType() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String ddl = "CREATE TABLE TEST_TABLE ( pk VARCHAR(10) NOT NULL CONSTRAINT PK PRIMARY KEY (pk))";
+        String tableName = generateUniqueName();
+        String ddl = "CREATE TABLE " + tableName + " ( pk VARCHAR(10) NOT NULL CONSTRAINT PK PRIMARY KEY (pk))";
         conn.createStatement().execute(ddl);
 
         try {
-            conn.createStatement().executeQuery("SELECT * FROM TEST_TABLE WHERE pk = ENCODE(1, 'HEX')");
+            conn.createStatement().executeQuery("SELECT * FROM " + tableName + " WHERE pk = ENCODE(1, 'HEX')");
             fail();
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.ILLEGAL_DATA.getErrorCode(), e.getErrorCode());
@@ -137,13 +160,14 @@ public class EncodeFunctionIT extends BaseHBaseManagedTimeIT {
     @Test
     public void testInvalidEncodingType() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
+        String tableName = generateUniqueName();
         String ddl =
-            "CREATE TABLE test_table ( some_column BINARY(12) NOT NULL CONSTRAINT PK PRIMARY KEY (some_column))";
+            "CREATE TABLE " + tableName + " ( some_column BINARY(12) NOT NULL CONSTRAINT PK PRIMARY KEY (some_column))";
         conn.createStatement().execute(ddl);
 
         try {
             conn.createStatement().executeQuery(
-                "SELECT * FROM test_table WHERE some_column = ENCODE(1, 'invalidEncodingFormat')");
+                "SELECT * FROM " + tableName + " WHERE some_column = ENCODE(1, 'invalidEncodingFormat')");
             fail();
         } catch (SQLException e) {
         }

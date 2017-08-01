@@ -32,7 +32,7 @@ import org.apache.phoenix.util.PropertiesUtil;
 import org.junit.Test;
 
 
-public class ServerExceptionIT extends BaseHBaseManagedTimeTableReuseIT {
+public class ServerExceptionIT extends ParallelStatsDisabledIT {
 
     @Test
     public void testServerExceptionBackToClient() throws Exception {
@@ -40,7 +40,7 @@ public class ServerExceptionIT extends BaseHBaseManagedTimeTableReuseIT {
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String t1 = generateRandomString();
+            String t1 = generateUniqueName();
             String ddl = "CREATE TABLE IF NOT EXISTS " + t1 + "(pk VARCHAR NOT NULL PRIMARY KEY, " +
                     "col1 INTEGER, col2 INTEGER)";
             createTestTable(getUrl(), ddl);

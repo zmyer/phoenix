@@ -35,14 +35,26 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.util.Map.Entry;
+import java.util.NavigableMap;
 import java.util.Properties;
 
+import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.HTableInterface;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.ResultScanner;
+import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.compile.QueryPlan;
 import org.apache.phoenix.exception.SQLExceptionCode;
+import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixStatement;
+import org.apache.phoenix.query.BaseTest;
+import org.apache.phoenix.schema.types.PInteger;
 import org.apache.phoenix.util.DateUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.PropertiesUtil;
+import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.TestUtil;
 import org.junit.Test;
 
@@ -51,12 +63,12 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
     @Test
     public void testGroupByWithLimitOverRowKey() throws Exception {
         long ts = nextTimestamp();
-        ensureTableCreated(getUrl(),TestUtil.PTSDB_NAME,null, ts-2);
+        ensureTableCreated(getUrl(),TestUtil.PTSDB_NAME,TestUtil.PTSDB_NAME, null, ts-2, null);
         Properties props = new Properties();
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10));
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(true);
-        PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + TestUtil.PTSDB_NAME + " (inst,host,date) VALUES(?,'b',CURRENT_DATE())");
+        PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + TestUtil.PTSDB_NAME + " (inst,host,\"DATE\") VALUES(?,'b',CURRENT_DATE())");
         stmt.setString(1, "a");
         stmt.execute();
         stmt.execute();
@@ -84,22 +96,22 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
     public void testUpsertDateValues() throws Exception {
         long ts = nextTimestamp();
         Date now = new Date(System.currentTimeMillis());
-        ensureTableCreated(getUrl(),TestUtil.PTSDB_NAME,null, ts-2);
+        ensureTableCreated(getUrl(),TestUtil.PTSDB_NAME,TestUtil.PTSDB_NAME,null, ts-2, null);
         Properties props = new Properties();
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 1)); // Execute at timestamp 1
         Connection conn = DriverManager.getConnection(getUrl(), props);
         String dateString = "1999-01-01 02:00:00";
-        PreparedStatement upsertStmt = conn.prepareStatement("upsert into ptsdb(inst,host,date) values('aaa','bbb',to_date('" + dateString + "'))");
+        PreparedStatement upsertStmt = conn.prepareStatement("upsert into ptsdb(inst,host,\"DATE\") values('aaa','bbb',to_date('" + dateString + "'))");
         int rowsInserted = upsertStmt.executeUpdate();
         assertEquals(1, rowsInserted);
-        upsertStmt = conn.prepareStatement("upsert into ptsdb(inst,host,date) values('ccc','ddd',current_date())");
+        upsertStmt = conn.prepareStatement("upsert into ptsdb(inst,host,\"DATE\") values('ccc','ddd',current_date())");
         rowsInserted = upsertStmt.executeUpdate();
         assertEquals(1, rowsInserted);
         conn.commit();
         
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 1
         conn = DriverManager.getConnection(getUrl(), props);
-        String select = "SELECT date,current_date() FROM ptsdb";
+        String select = "SELECT \"DATE\",current_date() FROM ptsdb";
         ResultSet rs = conn.createStatement().executeQuery(select);
         Date then = new Date(System.currentTimeMillis());
         assertTrue(rs.next());
@@ -113,7 +125,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
     @Test
     public void testUpsertValuesWithExpression() throws Exception {
         long ts = nextTimestamp();
-        ensureTableCreated(getUrl(),"IntKeyTest",null, ts-2);
+        ensureTableCreated(getUrl(),"IntKeyTest","IntKeyTest", null, ts-2, null);
         Properties props = new Properties();
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 1)); // Execute at timestamp 1
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -145,7 +157,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         Properties props = new Properties();
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts));
         Connection conn = DriverManager.getConnection(getUrl(), props);
-        conn.createStatement().execute("create table UpsertDateTest (k VARCHAR not null primary key,date DATE)");
+        conn.createStatement().execute("create table UpsertDateTest (k VARCHAR not null primary key,\"DATE\" DATE)");
         conn.close();
 
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts+5));
@@ -156,10 +168,32 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts+10));
         conn = DriverManager.getConnection(getUrl(), props);
-        ResultSet rs = conn.createStatement().executeQuery("select k,to_char(date) from UpsertDateTest");
+        ResultSet rs = conn.createStatement().executeQuery("select k,to_char(\"DATE\") from UpsertDateTest");
         assertTrue(rs.next());
         assertEquals("a", rs.getString(1));
         assertEquals("2013-06-08 00:00:00.000", rs.getString(2));
+    }
+    
+    @Test
+    public void testUpsertValuesWithDescDecimal() throws Exception {
+        long ts = nextTimestamp();
+        Properties props = new Properties();
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts));
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        conn.createStatement().execute("create table UpsertDecimalDescTest (k DECIMAL(12,3) NOT NULL PRIMARY KEY DESC)");
+        conn.close();
+
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts+5));
+        conn = DriverManager.getConnection(getUrl(), props);
+        conn.createStatement().execute("upsert into UpsertDecimalDescTest values (0.0)");
+        conn.commit();
+        conn.close();
+        
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts+10));
+        conn = DriverManager.getConnection(getUrl(), props);
+        ResultSet rs = conn.createStatement().executeQuery("select k from UpsertDecimalDescTest");
+        assertTrue(rs.next());
+        assertEquals(0.0, rs.getDouble(1), 0.001);
     }
 
     @Test
@@ -293,8 +327,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         PreparedStatement stmt = null;
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            stmt = conn.prepareStatement("create table UpsertTimestamp (a integer NOT NULL, t timestamp NOT NULL CONSTRAINT pk PRIMARY KEY (a, t))");
-            stmt.execute();
+            conn.createStatement().execute("create table UpsertTimestamp (a integer NOT NULL, t timestamp NOT NULL CONSTRAINT pk PRIMARY KEY (a, t))");
         } finally {
             closeStmtAndConn(stmt, conn);
         }
@@ -334,8 +367,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         PreparedStatement stmt = null;
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            stmt = conn.prepareStatement("create table UpsertTimestamp (a integer NOT NULL, t timestamp NOT NULL CONSTRAINT pk PRIMARY KEY (a, t))");
-            stmt.execute();
+            conn.createStatement().execute("create table UpsertTimestamp (a integer NOT NULL, t timestamp NOT NULL CONSTRAINT pk PRIMARY KEY (a, t))");
         } finally {
             closeStmtAndConn(stmt, conn);
         }
@@ -432,8 +464,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         PreparedStatement stmt = null;
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            stmt = conn.prepareStatement("create table UpsertFloat (k varchar primary key, v float)");
-            stmt.execute();
+            conn.createStatement().execute("create table UpsertFloat (k varchar primary key, v float)");
         } finally {
             closeStmtAndConn(stmt, conn);
         }
@@ -470,10 +501,10 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts));
         Connection conn = null;
         PreparedStatement pstmt = null;
+        String tableName = BaseTest.generateUniqueName();
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            pstmt = conn.prepareStatement("create table t (k varchar primary key, v integer)");
-            pstmt.execute();
+            conn.createStatement().execute("create table " + tableName + " (k varchar primary key, v integer)");
         } finally {
             closeStmtAndConn(pstmt, conn);
         }
@@ -481,7 +512,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2));
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            pstmt = conn.prepareStatement("upsert into t values (?, ?)");
+            pstmt = conn.prepareStatement("upsert into " + tableName + " values (?, ?)");
             pstmt.setString(1, "a");
             pstmt.setInt(2, 1);
             pstmt.addBatch();
@@ -497,7 +528,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 4));
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            pstmt = conn.prepareStatement("select * from t");
+            pstmt = conn.prepareStatement("select * from " + tableName);
             ResultSet rs = pstmt.executeQuery();
             assertTrue(rs.next());
             assertEquals("a", rs.getString(1));
@@ -514,10 +545,10 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         conn = DriverManager.getConnection(getUrl(), props);
         Statement stmt = conn.createStatement();
         try {
-            stmt.addBatch("upsert into t values ('c', 3)");
-            stmt.addBatch("select count(*) from t");
-            stmt.addBatch("upsert into t values ('a', 4)");
-            ResultSet rs = stmt.executeQuery("select count(*) from t");
+            stmt.addBatch("upsert into " + tableName + " values ('c', 3)");
+            stmt.addBatch("select count(*) from " + tableName);
+            stmt.addBatch("upsert into " + tableName + " values ('a', 4)");
+            ResultSet rs = stmt.executeQuery("select count(*) from " + tableName);
             assertTrue(rs.next());
             assertEquals(2, rs.getInt(1));
             int[] result = stmt.executeBatch();
@@ -533,7 +564,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 8));
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            pstmt = conn.prepareStatement("select * from t");
+            pstmt = conn.prepareStatement("select * from " + tableName);
             ResultSet rs = pstmt.executeQuery();
             assertTrue(rs.next());
             assertEquals("a", rs.getString(1));
@@ -563,8 +594,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         PreparedStatement stmt = null;
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            stmt = conn.prepareStatement("create table UpsertTimestamp (k varchar, v unsigned_date not null, constraint pk primary key (k,v desc))");
-            stmt.execute();
+            conn.createStatement().execute("create table UpsertTimestamp (k varchar, v unsigned_date not null, constraint pk primary key (k,v desc))");
         } finally {
             closeStmtAndConn(stmt, conn);
         }
@@ -605,9 +635,8 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
         PreparedStatement stmt = null;
         try {
             conn = DriverManager.getConnection(getUrl(), props);
-            stmt = conn.prepareStatement("create table UpsertDateVal (k varchar, v date not null, t timestamp" +
+            conn.createStatement().execute("create table UpsertDateVal (k varchar, v date not null, t timestamp" +
                     ", tt time constraint pk primary key (k,v desc))");
-            stmt.execute();
         } finally {
             closeStmtAndConn(stmt, conn);
         }
@@ -630,6 +659,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
 
         Date date = toDate(dateStr);
         Timestamp timeStamp = new Timestamp(toDate(timeStampStr).getTime());
+        timeStamp.setNanos(Timestamp.valueOf(timeStampStr).getNanos());
         Time time = new Time(toDate(timeStr).getTime());
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 4));
         try {
@@ -828,7 +858,7 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
             assertEquals("KV2", rs.getString(2));
             assertFalse(rs.next());
             
-            // Verify now that the data was correctly added to the mutable index too.
+            // Verify now that the data was correctly added to the immutable index too.
             stmt = conn.prepareStatement("SELECT KV2 FROM " + tableName + " WHERE PK2 = ? AND KV1 = ?");
             stmt.setDate(1, upsertedDate);
             stmt.setString(2, "KV1");
@@ -919,6 +949,57 @@ public class UpsertValuesIT extends BaseClientManagedTimeIT {
             fail();
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.ILLEGAL_DATA.getErrorCode(), e.getErrorCode());
+        }
+    }
+    
+    @Test
+    public void testAutoCastLongToBigDecimal() throws Exception {
+        long ts = nextTimestamp();
+        try (Connection conn = getConnection(ts)) {
+            conn.createStatement().execute("CREATE TABLE LONG_BUG (NAME VARCHAR PRIMARY KEY, AMOUNT DECIMAL)");
+        }
+        try (Connection conn = getConnection(ts + 10)) {
+            conn.createStatement().execute("UPSERT INTO LONG_BUG (NAME, AMOUNT) VALUES('HELLO1', -50000)");
+            conn.commit();
+        }
+        try (Connection conn = getConnection(ts + 20)) {
+            ResultSet rs = conn.createStatement().executeQuery("SELECT NAME, AMOUNT FROM LONG_BUG");
+            assertTrue(rs.next());
+            assertEquals("HELLO1", rs.getString(1));
+            assertTrue(new BigDecimal(-50000).compareTo(rs.getBigDecimal(2)) == 0);
+            assertFalse(rs.next());
+        }
+    }
+    
+    public void testColumnQualifierForUpsertedValues() throws Exception {
+        String schemaName = "A";
+        String tableName = "TEST";
+        String fullTableName = SchemaUtil.getTableName(schemaName, tableName);
+        String ddl = "create table " + fullTableName 
+                + " (" 
+                + " K varchar primary key,"
+                + " CF1.V1 varchar, CF2.V2 VARCHAR, CF2.V3 VARCHAR)";
+        try (Connection conn = getConnection(nextTimestamp())) {
+            conn.createStatement().execute(ddl);
+        }
+        String dml = "UPSERT INTO " + fullTableName + " VALUES (?, ?, ?, ?)";
+        try (Connection conn = getConnection(nextTimestamp())) {
+            PreparedStatement stmt = conn.prepareStatement(dml);
+            stmt.setString(1, "KEY1");
+            stmt.setString(2, "VALUE1");
+            stmt.setString(3, "VALUE2");
+            stmt.setString(4, "VALUE3");
+            stmt.executeUpdate();
+            conn.commit();
+        }
+        // Issue a raw hbase scan and assert that key values have the expected column qualifiers.
+        try (Connection conn = getConnection(nextTimestamp())) {
+            HTableInterface table = conn.unwrap(PhoenixConnection.class).getQueryServices().getTable(Bytes.toBytes(fullTableName));
+            ResultScanner scanner = table.getScanner(new Scan());
+            Result next = scanner.next();
+            assertTrue(next.containsColumn(Bytes.toBytes("CF1"), PInteger.INSTANCE.toBytes(1)));
+            assertTrue(next.containsColumn(Bytes.toBytes("CF2"), PInteger.INSTANCE.toBytes(2)));
+            assertTrue(next.containsColumn(Bytes.toBytes("CF2"), PInteger.INSTANCE.toBytes(3)));
         }
     }
     

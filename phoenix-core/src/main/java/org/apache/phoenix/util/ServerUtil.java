@@ -25,6 +25,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.hadoop.hbase.DoNotRetryIOException;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.client.HTablePool;
@@ -34,6 +36,7 @@ import org.apache.phoenix.exception.PhoenixIOException;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.hbase.index.util.VersionUtil;
+import org.apache.phoenix.schema.StaleRegionBoundaryCacheException;
 
 
 @SuppressWarnings("deprecation")
@@ -42,6 +45,8 @@ public class ServerUtil {
     
     private static final String FORMAT = "ERROR %d (%s): %s";
     private static final Pattern PATTERN = Pattern.compile("ERROR (\\d+) \\((\\w+)\\): (.*)");
+    private static final Pattern PATTERN_FOR_TS = Pattern.compile(",serverTimestamp=(\\d+),");
+    private static final String FORMAT_FOR_TIMESTAMP = ",serverTimestamp=%d,";
     private static final Map<Class<? extends Exception>, SQLExceptionCode> errorcodeMap
         = new HashMap<Class<? extends Exception>, SQLExceptionCode>();
     static {
@@ -113,6 +118,9 @@ public class ServerUtil {
     
     public static SQLException parseServerExceptionOrNull(Throwable t) {
         while (t.getCause() != null) {
+            if (t instanceof NotServingRegionException) {
+                return parseRemoteException(new StaleRegionBoundaryCacheException());
+            }
             t = t.getCause();
         }
         return parseRemoteException(t);
@@ -171,4 +179,43 @@ public class ServerUtil {
         }
         return getTableFromSingletonPool(env, tableName);
     }
+    
+    public static long parseServerTimestamp(Throwable t) {
+        while (t.getCause() != null) {
+            t = t.getCause();
+        }
+        return parseTimestampFromRemoteException(t);
+    }
+
+    private static long parseTimestampFromRemoteException(Throwable t) {
+        String message = t.getLocalizedMessage();
+        if (message != null) {
+            // If the message matches the standard pattern, recover the SQLException and throw it.
+            Matcher matcher = PATTERN_FOR_TS.matcher(t.getLocalizedMessage());
+            if (matcher.find()) {
+                String tsString = matcher.group(1);
+                if (tsString != null) {
+                    return Long.parseLong(tsString);
+                }
+            }
+        }
+        return HConstants.LATEST_TIMESTAMP;
+    }
+
+    public static DoNotRetryIOException wrapInDoNotRetryIOException(String msg, Throwable t, long timestamp) {
+        if (msg == null) {
+            msg = "";
+        }
+        if (t instanceof SQLException) {
+            msg = constructSQLErrorMessage((SQLException) t, msg);
+        }
+        msg += String.format(FORMAT_FOR_TIMESTAMP, timestamp);
+        return new DoNotRetryIOException(msg, t);
+    }
+    
+    public static boolean readyToCommit(int rowCount, long mutationSize, int maxBatchSize, long maxBatchSizeBytes) {
+        return maxBatchSize > 0 && rowCount >= maxBatchSize
+                || (maxBatchSizeBytes > 0 && mutationSize >= maxBatchSizeBytes);
+    }
+    
 }

@@ -1,9 +1,7 @@
 /*
- * Copyright 2010 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
- *distributed with this work for additional information
+ * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you maynot use this file except in compliance
@@ -64,8 +62,8 @@ public class PhoenixEncodeDecodeTest extends BaseConnectionlessQueryTest {
         Date d = nullFixedWidth ? null : new Date(100);
         String s = nullVariableWidth ? null : "foo";
         Object[] values = new Object[] {"def", "eid", d, s, s};
-        byte[] bytes = PhoenixRuntime.encodeValues(conn, "T", values, Lists.newArrayList(new Pair<String, String>(null, "pk1"), new Pair<String, String>(null, "pk2"), new Pair<String, String>("cf1", "v1"), new Pair<String, String>("cf2", "v2"), new Pair<String, String>("cf2", "v1")));
-        Object[] decodedValues = PhoenixRuntime.decodeValues(conn, "T", bytes, Lists.newArrayList(new Pair<String, String>(null, "pk1"), new Pair<String, String>(null, "pk2"), new Pair<String, String>("cf1", "v1"), new Pair<String, String>("cf2", "v2"), new Pair<String, String>("cf2", "v1")));
+        byte[] bytes = PhoenixRuntime.encodeColumnValues(conn, "T", values, Lists.newArrayList(new Pair<String, String>(null, "pk1"), new Pair<String, String>(null, "pk2"), new Pair<String, String>("cf1", "v1"), new Pair<String, String>("cf2", "v2"), new Pair<String, String>("cf2", "v1")));
+        Object[] decodedValues = PhoenixRuntime.decodeColumnValues(conn, "T", bytes, Lists.newArrayList(new Pair<String, String>(null, "pk1"), new Pair<String, String>(null, "pk2"), new Pair<String, String>("cf1", "v1"), new Pair<String, String>("cf2", "v2"), new Pair<String, String>("cf2", "v1")));
         assertEquals(Lists.newArrayList("def", "eid", d, s, s), Arrays.asList(decodedValues));
     }
     

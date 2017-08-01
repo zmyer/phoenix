@@ -17,8 +17,6 @@
  */
 package org.apache.phoenix.iterate;
 
-import static org.apache.phoenix.monitoring.MetricType.SCAN_BYTES;
-
 import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
@@ -33,6 +31,8 @@ import org.apache.phoenix.compile.QueryPlan;
 import org.apache.phoenix.coprocessor.BaseScannerRegionObserver;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.job.JobManager.JobCallable;
+import org.apache.phoenix.monitoring.ReadMetricQueue;
+import org.apache.phoenix.monitoring.ScanMetricsHolder;
 import org.apache.phoenix.monitoring.TaskExecutionMetricsHolder;
 import org.apache.phoenix.parse.HintNode;
 import org.apache.phoenix.query.QueryConstants;
@@ -59,9 +59,9 @@ public class SerialIterators extends BaseResultIterators {
     private final Integer offset;
     
     public SerialIterators(QueryPlan plan, Integer perScanLimit, Integer offset,
-            ParallelIteratorFactory iteratorFactory, ParallelScanGrouper scanGrouper)
+            ParallelIteratorFactory iteratorFactory, ParallelScanGrouper scanGrouper, Scan scan)
             throws SQLException {
-        super(plan, perScanLimit, offset, scanGrouper);
+        super(plan, perScanLimit, offset, scanGrouper, scan);
         this.offset = offset;
         // must be a offset or a limit specified or a SERIAL hint
         Preconditions.checkArgument(
@@ -71,7 +71,7 @@ public class SerialIterators extends BaseResultIterators {
 
     @Override
     protected void submitWork(final List<List<Scan>> nestedScans, List<List<Pair<Scan,Future<PeekingResultIterator>>>> nestedFutures,
-            final Queue<PeekingResultIterator> allIterators, int estFlattenedSize, boolean isReverse) {
+            final Queue<PeekingResultIterator> allIterators, int estFlattenedSize, boolean isReverse, final ParallelScanGrouper scanGrouper) {
         ExecutorService executor = context.getConnection().getQueryServices().getExecutor();
         final String tableName = tableRef.getTable().getPhysicalName().getString();
         final TaskExecutionMetricsHolder taskMetrics = new TaskExecutionMetricsHolder(context.getReadMetricsQueue(), tableName);
@@ -114,6 +114,14 @@ public class SerialIterators extends BaseResultIterators {
         }
     }
 
+    /**
+     * No need to use stats when executing serially
+     */
+    @Override
+    protected boolean useStats() {
+        return false;
+    }
+    
     @Override
     protected String getName() {
         return NAME;
@@ -160,13 +168,20 @@ public class SerialIterators extends BaseResultIterators {
             if (index >= scans.size()) {
                 return EMPTY_ITERATOR;
             }
+            ReadMetricQueue readMetrics = context.getReadMetricsQueue();
+            boolean isRequestMetricsEnabled = readMetrics.isRequestMetricsEnabled();
             while (index < scans.size()) {
                 Scan currentScan = scans.get(index++);
                 if (remainingOffset != null) {
                     currentScan.setAttribute(BaseScannerRegionObserver.SCAN_OFFSET, PInteger.INSTANCE.toBytes(remainingOffset));
                 }
-                TableResultIterator itr = new TableResultIterator(mutationState, tableRef, currentScan, context.getReadMetricsQueue().allotMetric(SCAN_BYTES, tableName), renewLeaseThreshold);
-                PeekingResultIterator peekingItr = iteratorFactory.newIterator(context, itr, currentScan, tableName);
+                ScanMetricsHolder scanMetricsHolder =
+                        ScanMetricsHolder.getInstance(readMetrics, tableName, currentScan,
+                            isRequestMetricsEnabled);
+                TableResultIterator itr =
+                        new TableResultIterator(mutationState, currentScan, scanMetricsHolder,
+                                renewLeaseThreshold, plan, scanGrouper);
+                PeekingResultIterator peekingItr = iteratorFactory.newIterator(context, itr, currentScan, tableName, plan);
                 Tuple tuple;
                 if ((tuple = peekingItr.peek()) == null) {
                     peekingItr.close();

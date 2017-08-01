@@ -17,6 +17,8 @@
  */
 package org.apache.phoenix.compile;
 
+import static org.apache.phoenix.util.EncodedColumnsUtil.isPossibleToUseEncodedCQFilter;
+
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.util.Collections;
@@ -26,6 +28,7 @@ import java.util.Set;
 
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.filter.Filter;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.expression.AndExpression;
@@ -36,6 +39,7 @@ import org.apache.phoenix.expression.LiteralExpression;
 import org.apache.phoenix.expression.visitor.KeyValueExpressionVisitor;
 import org.apache.phoenix.filter.MultiCFCQKeyValueComparisonFilter;
 import org.apache.phoenix.filter.MultiCQKeyValueComparisonFilter;
+import org.apache.phoenix.filter.MultiEncodedCQKeyValueComparisonFilter;
 import org.apache.phoenix.filter.RowKeyComparisonFilter;
 import org.apache.phoenix.filter.SingleCFCQKeyValueComparisonFilter;
 import org.apache.phoenix.filter.SingleCQKeyValueComparisonFilter;
@@ -46,16 +50,21 @@ import org.apache.phoenix.parse.ParseNodeFactory;
 import org.apache.phoenix.parse.SelectStatement;
 import org.apache.phoenix.parse.StatelessTraverseAllParseNodeVisitor;
 import org.apache.phoenix.parse.SubqueryParseNode;
+import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.AmbiguousColumnException;
 import org.apache.phoenix.schema.ColumnNotFoundException;
 import org.apache.phoenix.schema.ColumnRef;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTable.ImmutableStorageScheme;
 import org.apache.phoenix.schema.PTable.IndexType;
+import org.apache.phoenix.schema.PTable.QualifierEncodingScheme;
+import org.apache.phoenix.schema.PTable.ViewType;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.TypeMismatchException;
 import org.apache.phoenix.schema.types.PBoolean;
 import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.ExpressionUtil;
 import org.apache.phoenix.util.ScanUtil;
 import org.apache.phoenix.util.SchemaUtil;
 
@@ -168,12 +177,14 @@ public class WhereCompiler {
         public Expression visit(ColumnParseNode node) throws SQLException {
             ColumnRef ref = resolveColumn(node);
             TableRef tableRef = ref.getTableRef();
+            Expression newColumnExpression = ref.newColumnExpression(node.isTableNameCaseSensitive(), node.isCaseSensitive());
             if (tableRef.equals(context.getCurrentTable()) && !SchemaUtil.isPKColumn(ref.getColumn())) {
+                byte[] cq = tableRef.getTable().getImmutableStorageScheme() == ImmutableStorageScheme.SINGLE_CELL_ARRAY_WITH_OFFSETS 
+                		? QueryConstants.SINGLE_KEYVALUE_COLUMN_QUALIFIER_BYTES : ref.getColumn().getColumnQualifierBytes();
                 // track the where condition columns. Later we need to ensure the Scan in HRS scans these column CFs
-                context.addWhereCoditionColumn(ref.getColumn().getFamilyName().getBytes(), ref.getColumn().getName()
-                        .getBytes());
+                context.addWhereConditionColumn(ref.getColumn().getFamilyName().getBytes(), cq);
             }
-            return ref.newColumnExpression(node.isTableNameCaseSensitive(), node.isCaseSensitive());
+			return newColumnExpression;
         }
 
         @Override
@@ -187,14 +198,16 @@ public class WhereCompiler {
             // inefficient. Then we can skip this plan.
             if (context.getCurrentTable().getTable().getIndexType() == IndexType.LOCAL
                     && (table.getIndexType() == null || table.getIndexType() == IndexType.GLOBAL)) {
-                throw new ColumnNotFoundException(ref.getColumn().getName().getString());
+                String schemaNameStr = table.getSchemaName()==null?null:table.getSchemaName().getString();
+                String tableNameStr = table.getTableName()==null?null:table.getTableName().getString();
+                throw new ColumnNotFoundException(schemaNameStr, tableNameStr, null, ref.getColumn().getName().getString());
             }
             // Track if we need to compare KeyValue during filter evaluation
             // using column family. If the column qualifier is enough, we
             // just use that.
             try {
                 if (!SchemaUtil.isPKColumn(ref.getColumn())) {
-                    table.getColumn(ref.getColumn().getName().getString());
+                    table.getColumnForColumnName(ref.getColumn().getName().getString());
                 }
             } catch (AmbiguousColumnException e) {
                 disambiguateWithFamily = true;
@@ -222,8 +235,13 @@ public class WhereCompiler {
 
             }
         }
+        
         public Count getCount() {
             return count;
+        }
+        
+        public KeyValueColumnExpression getColumn() {
+            return column;
         }
     }
 
@@ -237,7 +255,7 @@ public class WhereCompiler {
 
         if (LiteralExpression.isBooleanFalseOrNull(whereClause)) {
             context.setScanRanges(ScanRanges.NOTHING);
-        } else if (whereClause != null && !LiteralExpression.isTrue(whereClause) && !hashJoinOptimization) {
+        } else if (whereClause != null && !ExpressionUtil.evaluatesToTrue(whereClause) && !hashJoinOptimization) {
             Filter filter = null;
             final Counter counter = new Counter();
             whereClause.accept(new KeyValueExpressionVisitor() {
@@ -257,19 +275,41 @@ public class WhereCompiler {
                     return null;
                 }
             });
-            switch (counter.getCount()) {
+            PTable table = context.getCurrentTable().getTable();
+            QualifierEncodingScheme encodingScheme = table.getEncodingScheme();
+            ImmutableStorageScheme storageScheme = table.getImmutableStorageScheme();
+            Counter.Count count = counter.getCount();
+            boolean allCFs = false;
+            byte[] essentialCF = null;
+            if (counter.getCount() == Counter.Count.SINGLE && whereClause.requiresFinalEvaluation() ) {
+                if (table.getViewType() == ViewType.MAPPED) {
+                    allCFs = true;
+                } else {
+                    byte[] emptyCF = SchemaUtil.getEmptyColumnFamily(table);
+                    if (Bytes.compareTo(emptyCF, counter.getColumn().getColumnFamily()) != 0) {
+                        essentialCF = emptyCF;
+                        count = Counter.Count.MULTIPLE;
+                    }
+                }
+            }
+            switch (count) {
             case NONE:
-                PTable table = context.getResolver().getTables().get(0).getTable();
-                byte[] essentialCF = table.getType() == PTableType.VIEW 
+                essentialCF = table.getType() == PTableType.VIEW 
                         ? ByteUtil.EMPTY_BYTE_ARRAY 
                         : SchemaUtil.getEmptyColumnFamily(table);
                 filter = new RowKeyComparisonFilter(whereClause, essentialCF);
                 break;
             case SINGLE:
-                filter = disambiguateWithFamily ? new SingleCFCQKeyValueComparisonFilter(whereClause) : new SingleCQKeyValueComparisonFilter(whereClause);
+                filter = disambiguateWithFamily 
+                    ? new SingleCFCQKeyValueComparisonFilter(whereClause) 
+                    : new SingleCQKeyValueComparisonFilter(whereClause);
                 break;
             case MULTIPLE:
-                filter = disambiguateWithFamily ? new MultiCFCQKeyValueComparisonFilter(whereClause) : new MultiCQKeyValueComparisonFilter(whereClause);
+                filter = isPossibleToUseEncodedCQFilter(encodingScheme, storageScheme) 
+                    ? new MultiEncodedCQKeyValueComparisonFilter(whereClause, encodingScheme, allCFs, essentialCF) 
+                    : (disambiguateWithFamily 
+                        ? new MultiCFCQKeyValueComparisonFilter( whereClause, allCFs, essentialCF) 
+                        : new MultiCQKeyValueComparisonFilter(whereClause, allCFs, essentialCF));
                 break;
             }
             scan.setFilter(filter);

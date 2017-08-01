@@ -26,6 +26,12 @@ import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.LiteralExpression;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.schema.types.PDataType;
+import org.apache.phoenix.schema.types.PVarchar;
+import org.apache.phoenix.schema.types.PDate;
+import org.apache.phoenix.schema.types.PInteger;
+import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
+import org.apache.phoenix.parse.FunctionParseNode.Argument;
+import org.apache.phoenix.parse.FunctionParseNode.FunctionClassType;
 
 import com.google.common.collect.Lists;
 
@@ -36,6 +42,14 @@ import com.google.common.collect.Lists;
  * 
  * @since 3.0.0
  */
+@BuiltInFunction(name = CeilFunction.NAME,
+        args = {
+                @Argument(allowedTypes={PDate.class}),
+                @Argument(allowedTypes={PVarchar.class, PInteger.class}, defaultValue = "null", isConstant=true),
+                @Argument(allowedTypes={PInteger.class}, defaultValue="1", isConstant=true)
+        },
+        classType = FunctionClassType.DERIVED
+)
 public class CeilDateExpression extends RoundDateExpression {
     
     public CeilDateExpression() {}
@@ -76,7 +90,7 @@ public class CeilDateExpression extends RoundDateExpression {
         
     }
     
-    CeilDateExpression(List<Expression> children) {
+    public CeilDateExpression(List<Expression> children) {
         super(children);
     }
     
@@ -93,6 +107,9 @@ public class CeilDateExpression extends RoundDateExpression {
     @Override
     public boolean evaluate(Tuple tuple, ImmutableBytesWritable ptr) {
         if (children.get(0).evaluate(tuple, ptr)) {
+            if (ptr.getLength() == 0) {
+                return true; // child evaluated to null
+            }
             PDataType dataType = getDataType();
             long time = dataType.getCodec().decodeLong(ptr, children.get(0).getSortOrder());
             long value = roundTime(time);

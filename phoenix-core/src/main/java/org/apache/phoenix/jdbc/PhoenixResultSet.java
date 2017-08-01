@@ -50,6 +50,7 @@ import org.apache.phoenix.compile.StatementContext;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.iterate.ResultIterator;
+import org.apache.phoenix.monitoring.MetricType;
 import org.apache.phoenix.monitoring.OverAllQueryMetrics;
 import org.apache.phoenix.monitoring.ReadMetricQueue;
 import org.apache.phoenix.schema.tuple.ResultTuple;
@@ -107,7 +108,7 @@ public class PhoenixResultSet implements ResultSet, SQLCloseable {
     private final static String STRING_FALSE = "0";
     private final static BigDecimal BIG_DECIMAL_FALSE = BigDecimal.valueOf(0);
     private final static Integer INTEGER_FALSE = Integer.valueOf(0);
-    private final static Tuple BEFORE_FIRST = new ResultTuple();
+    private final static Tuple BEFORE_FIRST = ResultTuple.EMPTY_TUPLE;
 
     private final ResultIterator scanner;
     private final RowProjector rowProjector;
@@ -1290,11 +1291,11 @@ public class PhoenixResultSet implements ResultSet, SQLCloseable {
         return scanner;
     }
     
-    public Map<String, Map<String, Long>> getReadMetrics() {
+    public Map<String, Map<MetricType, Long>> getReadMetrics() {
         return readMetricsQueue.aggregate();
     }
 
-    public Map<String, Long> getOverAllRequestReadMetrics() {
+    public Map<MetricType, Long> getOverAllRequestReadMetrics() {
         return overAllQueryMetrics.publish();
     }
     

@@ -20,8 +20,19 @@ package org.apache.phoenix.flume;
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
-import org.apache.flume.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.util.Properties;
+
+import org.apache.flume.Channel;
+import org.apache.flume.Context;
+import org.apache.flume.Sink;
+import org.apache.flume.SinkFactory;
+import org.apache.flume.Transaction;
 import org.apache.flume.channel.MemoryChannel;
 import org.apache.flume.conf.Configurables;
 import org.apache.flume.event.EventBuilder;
@@ -30,22 +41,14 @@ import org.apache.flume.sink.DefaultSinkFactory;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.end2end.BaseHBaseManagedTimeIT;
-import org.apache.phoenix.flume.serializer.EventSerializers;
 import org.apache.phoenix.flume.serializer.CustomSerializer;
+import org.apache.phoenix.flume.serializer.EventSerializers;
 import org.apache.phoenix.flume.sink.NullPhoenixSink;
 import org.apache.phoenix.flume.sink.PhoenixSink;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.TestUtil;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.util.Properties;
-
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 
 
 public class PhoenixSinkIT extends BaseHBaseManagedTimeIT {
@@ -96,7 +99,7 @@ public class PhoenixSinkIT extends BaseHBaseManagedTimeIT {
         sinkContext = new Context ();
         sinkContext.put(FlumeConstants.CONFIG_TABLE, "test");
         sinkContext.put(FlumeConstants.CONFIG_JDBC_URL, getUrl());
-        sinkContext.put(FlumeConstants.CONFIG_SERIALIZER,"csv");
+        sinkContext.put(FlumeConstants.CONFIG_SERIALIZER,"unknown");
         sinkContext.put(FlumeConstants.CONFIG_SERIALIZER_PREFIX + FlumeConstants.CONFIG_COLUMN_NAMES,"col1,col2");
         sinkContext.put(FlumeConstants.CONFIG_SERIALIZER_PREFIX + FlumeConstants.CONFIG_ROWKEY_TYPE_GENERATOR,DefaultKeyGenerator.TIMESTAMP.name());
 
@@ -128,13 +131,14 @@ public class PhoenixSinkIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testSinkLifecycle () {
-        
-        String ddl = "CREATE TABLE flume_test " +
+        String tableName = generateUniqueName();
+
+        String ddl = "CREATE TABLE " + tableName +
                 "  (flume_time timestamp not null, col1 varchar , col2 varchar" +
                 "  CONSTRAINT pk PRIMARY KEY (flume_time))\n";
         
         sinkContext = new Context ();
-        sinkContext.put(FlumeConstants.CONFIG_TABLE, "flume_test");
+        sinkContext.put(FlumeConstants.CONFIG_TABLE,  tableName);
         sinkContext.put(FlumeConstants.CONFIG_JDBC_URL, getUrl());
         sinkContext.put(FlumeConstants.CONFIG_SERIALIZER,EventSerializers.REGEX.name());
         sinkContext.put(FlumeConstants.CONFIG_TABLE_DDL, ddl);
@@ -158,12 +162,12 @@ public class PhoenixSinkIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testCreateTable () throws Exception {
-        
-        String ddl = "CREATE TABLE flume_test " +
+        String tableName = generateUniqueName();
+        String ddl = "CREATE TABLE " + tableName + " " +
                 "  (flume_time timestamp not null, col1 varchar , col2 varchar" +
                 "  CONSTRAINT pk PRIMARY KEY (flume_time))\n";
 
-        final String fullTableName = "FLUME_TEST";
+        final String fullTableName =  tableName;
         sinkContext = new Context ();
         sinkContext.put(FlumeConstants.CONFIG_TABLE, fullTableName);
         sinkContext.put(FlumeConstants.CONFIG_JDBC_URL, getUrl());

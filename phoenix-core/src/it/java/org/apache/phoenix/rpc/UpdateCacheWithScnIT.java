@@ -19,9 +19,17 @@ package org.apache.phoenix.rpc;
 
 import static org.apache.phoenix.util.TestUtil.INDEX_DATA_SCHEMA;
 import static org.apache.phoenix.util.TestUtil.MUTABLE_INDEX_DATA_TABLE;
+import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.util.Properties;
 
 import org.apache.phoenix.end2end.BaseClientManagedTimeIT;
 import org.apache.phoenix.query.QueryConstants;
+import org.apache.phoenix.util.PhoenixRuntime;
+import org.apache.phoenix.util.PropertiesUtil;
+import org.apache.phoenix.util.TestUtil;
 import org.junit.Test;
 
 public class UpdateCacheWithScnIT extends BaseClientManagedTimeIT {
@@ -30,7 +38,10 @@ public class UpdateCacheWithScnIT extends BaseClientManagedTimeIT {
 	public void testUpdateCacheWithScn() throws Exception {
         long ts = nextTimestamp();
         String fullTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + MUTABLE_INDEX_DATA_TABLE;
-        ensureTableCreated(getUrl(), MUTABLE_INDEX_DATA_TABLE, ts);
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts));
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        conn.createStatement().execute("create table " + fullTableName + TestUtil.TEST_TABLE_SCHEMA);
         // FIXME: given that the scn is advancing in the test, why aren't there more RPCs?
 		UpdateCacheIT.helpTestUpdateCache(fullTableName, ts+2, new int[] {1, 1});
 	}

@@ -19,6 +19,7 @@ package org.apache.phoenix.compile;
 
 import static org.apache.phoenix.query.QueryConstants.MILLIS_IN_DAY;
 import static org.apache.phoenix.util.TestUtil.BINARY_NAME;
+import static org.apache.phoenix.util.TestUtil.BTABLE_NAME;
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
 import static org.apache.phoenix.util.TestUtil.assertDegenerate;
 import static org.apache.phoenix.util.TestUtil.assertEmptyScanKey;
@@ -28,6 +29,7 @@ import static org.apache.phoenix.util.TestUtil.rowKeyFilter;
 import static org.apache.phoenix.util.TestUtil.substr;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -38,6 +40,7 @@ import java.sql.Connection;
 import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
@@ -62,6 +65,7 @@ import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.types.PChar;
 import org.apache.phoenix.schema.types.PDate;
 import org.apache.phoenix.schema.types.PDecimal;
+import org.apache.phoenix.schema.types.PDouble;
 import org.apache.phoenix.schema.types.PInteger;
 import org.apache.phoenix.schema.types.PLong;
 import org.apache.phoenix.schema.types.PUnsignedLong;
@@ -70,6 +74,7 @@ import org.apache.phoenix.util.ByteUtil;
 import org.apache.phoenix.util.DateUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.PropertiesUtil;
+import org.apache.phoenix.util.ScanUtil;
 import org.apache.phoenix.util.StringUtil;
 import org.apache.phoenix.util.TestUtil;
 import org.junit.Test;
@@ -122,7 +127,7 @@ public class WhereOptimizerTest extends BaseConnectionlessQueryTest {
 
     @Test
     public void testGetByteBitExpression() throws SQLException {
-        ensureTableCreated(getUrl(), TestUtil.BINARY_NAME);
+        ensureTableCreated(getUrl(), TestUtil.BINARY_NAME, TestUtil.BINARY_NAME);
         int result = 1;
         String query = "select * from " + BINARY_NAME + " where GET_BYTE(a_binary, 0)=" + result;
         Scan scan = compileStatement(query).getScan();
@@ -1044,7 +1049,7 @@ public class WhereOptimizerTest extends BaseConnectionlessQueryTest {
      */
     @Test
     public void testValueComparisonInt() throws SQLException {
-        ensureTableCreated(getUrl(),"PKIntValueTest");
+        ensureTableCreated(getUrl(),"PKIntValueTest", "PKIntValueTest");
         String query;
         // int <-> long
         // Case 1: int = long, comparison always false, key is degenerated.
@@ -1070,7 +1075,7 @@ public class WhereOptimizerTest extends BaseConnectionlessQueryTest {
 
     @Test
     public void testValueComparisonUnsignedInt() throws SQLException {
-        ensureTableCreated(getUrl(), "PKUnsignedIntValueTest");
+        ensureTableCreated(getUrl(), "PKUnsignedIntValueTest", "PKUnsignedIntValueTest");
         String query;
         // unsigned_int <-> negative int/long
         // Case 1: unsigned_int = negative int, always false;
@@ -1102,7 +1107,7 @@ public class WhereOptimizerTest extends BaseConnectionlessQueryTest {
 
     @Test
     public void testValueComparisonUnsignedLong() throws SQLException {
-        ensureTableCreated(getUrl(), "PKUnsignedLongValueTest");
+        ensureTableCreated(getUrl(), "PKUnsignedLongValueTest", "PKUnsignedLongValueTest");
         String query;
         // unsigned_long <-> positive int/long
         // Case 1: unsigned_long = negative int/long, always false;
@@ -1216,6 +1221,55 @@ public class WhereOptimizerTest extends BaseConnectionlessQueryTest {
                         StringUtil.padChar(ByteUtil.nextKey(PChar.INSTANCE.toBytes("foo")),15), false)));
         assertEquals(expectedRanges, ranges);
     }
+
+    @Test
+    public void testOrPKRanges() throws SQLException {
+        Connection conn = DriverManager.getConnection(getUrl());
+        ensureTableCreated(getUrl(), TestUtil.BTABLE_NAME);
+        Statement stmt = conn.createStatement();
+        // BTABLE has 5 PK columns
+        String query = "select * from " + BTABLE_NAME +
+                       " where (a_string > '1' and a_string < '5') or (a_string > '6' and a_string < '9')";
+        StatementContext context = compileStatement(query);
+        Filter filter = context.getScan().getFilter();
+
+        assertNotNull(filter);
+        assertTrue(filter instanceof SkipScanFilter);
+        ScanRanges scanRanges = context.getScanRanges();
+        assertNotNull(scanRanges);
+        List<List<KeyRange>> ranges = scanRanges.getRanges();
+        assertEquals(1, ranges.size());
+        List<List<KeyRange>> expectedRanges = Collections.singletonList(Arrays.asList(
+                KeyRange.getKeyRange(Bytes.toBytes("1"), false, Bytes.toBytes("5"), false),
+                KeyRange.getKeyRange(Bytes.toBytes("6"), false, Bytes.toBytes("9"), false)));
+        assertEquals(expectedRanges, ranges);
+
+        stmt.close();
+        conn.close();
+    }
+    
+    @Test
+    public void testOrPKRangesNotOptimized() throws SQLException {
+        Connection conn = DriverManager.getConnection(getUrl());
+        ensureTableCreated(getUrl(), TestUtil.BTABLE_NAME);
+        Statement stmt = conn.createStatement();
+        // BTABLE has 5 PK columns
+        String[] queries = {
+                "select * from " + BTABLE_NAME + " where (a_string > '1' and a_string < '5') or (a_string > '6' and a_string < '9' and a_id = 'foo')",
+                "select * from " + BTABLE_NAME + " where (a_id > 'aaa' and a_id < 'ccc') or (a_id > 'jjj' and a_id < 'mmm')",
+                };
+        for (String query : queries) {
+            StatementContext context = compileStatement(query);
+            Iterator<Filter> it = ScanUtil.getFilterIterator(context.getScan());
+            while (it.hasNext()) {
+                assertFalse(it.next() instanceof SkipScanFilter);
+            }
+            TestUtil.assertNotDegenerate(context.getScan());
+        }
+
+        stmt.close();
+        conn.close();
+    }
     
     @Test
     public void testForceSkipScanOnSaltedTable() throws SQLException {
@@ -1256,7 +1310,7 @@ public class WhereOptimizerTest extends BaseConnectionlessQueryTest {
     
     @Test
     public void testForceRangeScanKeepsFilters() throws SQLException {
-        ensureTableCreated(getUrl(), TestUtil.ENTITY_HISTORY_TABLE_NAME);
+        ensureTableCreated(getUrl(), TestUtil.ENTITY_HISTORY_TABLE_NAME, TestUtil.ENTITY_HISTORY_TABLE_NAME);
         String tenantId = "000000000000001";
         String keyPrefix = "002";
         String query = "select /*+ RANGE_SCAN */ ORGANIZATION_ID, PARENT_ID, CREATED_DATE, ENTITY_HISTORY_ID from " + TestUtil.ENTITY_HISTORY_TABLE_NAME + 
@@ -1625,6 +1679,39 @@ public class WhereOptimizerTest extends BaseConnectionlessQueryTest {
     }
     
     @Test
+    public void testQueryMoreRVC() throws SQLException {
+        String tenantId = "000000000000001";
+        String parentId = "000000000000008";
+        
+        String ddl = "CREATE TABLE rvcTestIdx "
+                + " (\n" + 
+                "    pk1 VARCHAR NOT NULL,\n" + 
+                "    v1 VARCHAR,\n" + 
+                "    pk2 DECIMAL NOT NULL,\n" + 
+                "    CONSTRAINT PK PRIMARY KEY \n" + 
+                "    (\n" + 
+                "        pk1,\n" + 
+                "        v1,\n" + 
+                "        pk2\n" + 
+                "    )\n" + 
+                ") MULTI_TENANT=true,IMMUTABLE_ROWS=true";
+        Connection conn = DriverManager.getConnection(getUrl(), PropertiesUtil.deepCopy(TEST_PROPERTIES));
+        conn.createStatement().execute(ddl);
+        String query = "SELECT pk1, pk2, v1 FROM rvcTestIdx WHERE pk1 = 'a' AND\n" + 
+                "(pk1, pk2) > ('a', 1)\n" + 
+                "ORDER BY PK1, PK2\n" + 
+                "LIMIT 2";
+        StatementContext context = compileStatement(query, 2);
+        Scan scan = context.getScan();
+        Filter filter = scan.getFilter();
+        assertNotNull(filter);
+        byte[] startRow = Bytes.toBytes("a");
+        byte[] stopRow = ByteUtil.concat(startRow, ByteUtil.nextKey(QueryConstants.SEPARATOR_BYTE_ARRAY));
+        assertArrayEquals(startRow, scan.getStartRow());
+        assertArrayEquals(stopRow, scan.getStopRow());
+    }
+    
+    @Test
     public void testCombiningRVCUsingOr() throws SQLException {
         String firstTenantId = "000000000000001";
         String secondTenantId = "000000000000005";
@@ -1982,5 +2069,81 @@ public class WhereOptimizerTest extends BaseConnectionlessQueryTest {
         assertArrayEquals(ByteUtil.concat(PVarchar.INSTANCE.toBytes("a"), QueryConstants.SEPARATOR_BYTE_ARRAY, PChar.INSTANCE.toBytes("foo"), PInteger.INSTANCE.toBytes(1), PInteger.INSTANCE.toBytes(3)), context.getScan().getStartRow());
         assertArrayEquals(ByteUtil.concat(PVarchar.INSTANCE.toBytes("a"), QueryConstants.SEPARATOR_BYTE_ARRAY, PChar.INSTANCE.toBytes("foo"), PInteger.INSTANCE.toBytes(1), ByteUtil.nextKey(PInteger.INSTANCE.toBytes(3))), context.getScan().getStopRow());
     }
+
+    @Test
+    public void testNoAggregatorForOrderBy() throws SQLException {
+        Connection conn = DriverManager.getConnection(getUrl(), PropertiesUtil.deepCopy(TEST_PROPERTIES));
+        conn.createStatement().execute("create table test (pk1 integer not null, pk2 integer not null, constraint pk primary key (pk1,pk2))");
+        StatementContext context = compileStatement("select count(distinct pk1) from test order by count(distinct pk2)");
+        assertEquals(1, context.getAggregationManager().getAggregators().getAggregatorCount());
+        context = compileStatement("select sum(pk1) from test order by count(distinct pk2)");
+        assertEquals(1, context.getAggregationManager().getAggregators().getAggregatorCount());
+        context = compileStatement("select min(pk1) from test order by count(distinct pk2)");
+        assertEquals(1, context.getAggregationManager().getAggregators().getAggregatorCount());
+        context = compileStatement("select max(pk1) from test order by count(distinct pk2)");
+        assertEquals(1, context.getAggregationManager().getAggregators().getAggregatorCount());
+        // here the ORDER BY is not optimized away
+        context = compileStatement("select avg(pk1) from test order by count(distinct pk2)");
+        assertEquals(2, context.getAggregationManager().getAggregators().getAggregatorCount());
+    }
     
+    @Test
+    public void testRVCWithLeadingPKEq() throws SQLException {
+        String tenantId = "o1";
+        Connection conn = DriverManager.getConnection(getUrl());
+        conn.createStatement().execute("CREATE TABLE COMMUNITIES.TEST (\n" + 
+                "    ORGANIZATION_ID CHAR(2) NOT NULL,\n" + 
+                "    SCORE DOUBLE NOT NULL,\n" + 
+                "    ENTITY_ID CHAR(2) NOT NULL\n" + 
+                "    CONSTRAINT PAGE_SNAPSHOT_PK PRIMARY KEY (\n" + 
+                "        ORGANIZATION_ID,\n" + 
+                "        SCORE,\n" + 
+                "        ENTITY_ID\n" + 
+                "    )\n" + 
+                ") VERSIONS=1, MULTI_TENANT=TRUE");
+        String query = "SELECT entity_id, score\n" + 
+                "FROM communities.test\n" + 
+                "WHERE organization_id = '" + tenantId + "'\n" + 
+                "AND (score, entity_id) > (2.0, '04')\n" + 
+                "ORDER BY score, entity_id";
+        Scan scan = compileStatement(query).getScan();
+        assertNotNull(scan.getFilter());
+
+        // See PHOENIX-3384: Optimize RVC expressions for non leading row key columns.
+        // FIXME: We should be able to optimize this better, taking into account the
+        // (score, entity_id) > (2.0, '04') to form more of the start/stop row.
+        assertArrayEquals(PVarchar.INSTANCE.toBytes(tenantId), scan.getStartRow());
+        assertArrayEquals(ByteUtil.nextKey(PVarchar.INSTANCE.toBytes(tenantId)), scan.getStopRow());
+    }
+
+    @Test
+    public void testRVCWithCompDescRowKey() throws SQLException {
+        String tenantId = "o1";
+        Connection conn = DriverManager.getConnection(getUrl());
+        conn.createStatement().execute("CREATE TABLE COMMUNITIES.TEST (\n" + 
+                "    ORGANIZATION_ID CHAR(2) NOT NULL,\n" + 
+                "    SCORE DOUBLE NOT NULL,\n" + 
+                "    ENTITY_ID CHAR(2) NOT NULL\n" + 
+                "    CONSTRAINT PAGE_SNAPSHOT_PK PRIMARY KEY (\n" + 
+                "        ORGANIZATION_ID,\n" + 
+                "        SCORE DESC,\n" + 
+                "        ENTITY_ID DESC\n" + 
+                "    )\n" + 
+                ") VERSIONS=1, MULTI_TENANT=TRUE");
+        String query = "SELECT entity_id, score\n" + 
+                "FROM communities.test\n" + 
+                "WHERE organization_id = '" + tenantId + "'\n" + 
+                "AND (organization_id, score, entity_id) < ('" + tenantId + "',2.0, '04')\n" + 
+                "ORDER BY score DESC, entity_id DESC";
+        Scan scan = compileStatement(query).getScan();
+        assertNull(scan.getFilter());
+
+        // FIXME See PHOENIX-3383: Comparison between descending row keys used in RVC is reverse
+        // This should set the startRow, but instead it's setting the stopRow
+        byte[] startRow = PChar.INSTANCE.toBytes(tenantId);
+        assertArrayEquals(startRow, scan.getStartRow());
+        byte[] stopRow = ByteUtil.concat(PChar.INSTANCE.toBytes(tenantId), PDouble.INSTANCE.toBytes(2.0, SortOrder.DESC), PChar.INSTANCE.toBytes("04", SortOrder.DESC));
+        assertArrayEquals(stopRow, scan.getStopRow());
+    }
+
 }

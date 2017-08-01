@@ -17,6 +17,8 @@
  */
 package org.apache.phoenix.execute;
 
+import static org.apache.phoenix.util.NumberUtil.add;
+
 import java.io.IOException;
 import java.nio.MappedByteBuffer;
 import java.sql.ParameterMetaData;
@@ -88,6 +90,9 @@ public class SortMergeJoinPlan implements QueryPlan {
     private final boolean isSingleValueOnly;
     private final Set<TableRef> tableRefs;
     private final int thresholdBytes;
+    private Long estimatedBytes;
+    private Long estimatedRows;
+    private boolean explainPlanCalled;
 
     public SortMergeJoinPlan(StatementContext context, FilterableStatement statement, TableRef table, 
             JoinType type, QueryPlan lhsPlan, QueryPlan rhsPlan, List<Expression> lhsKeyExpressions, List<Expression> rhsKeyExpressions,
@@ -131,7 +136,12 @@ public class SortMergeJoinPlan implements QueryPlan {
     }
 
     @Override
-    public ResultIterator iterator(ParallelScanGrouper scanGrouper) throws SQLException {        
+    public ResultIterator iterator(ParallelScanGrouper scanGrouper) throws SQLException {
+        return iterator(scanGrouper, null);
+    }
+
+    @Override
+    public ResultIterator iterator(ParallelScanGrouper scanGrouper, Scan scan) throws SQLException {        
         return type == JoinType.Semi || type == JoinType.Anti ? 
                 new SemiAntiJoinIterator(lhsPlan.iterator(scanGrouper), rhsPlan.iterator(scanGrouper)) :
                 new BasicJoinIterator(lhsPlan.iterator(scanGrouper), rhsPlan.iterator(scanGrouper));
@@ -144,6 +154,7 @@ public class SortMergeJoinPlan implements QueryPlan {
 
     @Override
     public ExplainPlan getExplainPlan() throws SQLException {
+        explainPlanCalled = true;
         List<String> steps = Lists.newArrayList();
         steps.add("SORT-MERGE-JOIN (" + type.toString().toUpperCase() + ") TABLES");
         for (String step : lhsPlan.getExplainPlan().getPlanSteps()) {
@@ -153,6 +164,8 @@ public class SortMergeJoinPlan implements QueryPlan {
         for (String step : rhsPlan.getExplainPlan().getPlanSteps()) {
             steps.add("    " + step);            
         }
+        estimatedBytes = add(add(estimatedBytes, lhsPlan.getEstimatedBytesToScan()), rhsPlan.getEstimatedBytesToScan());
+        estimatedRows = add(add(estimatedRows, lhsPlan.getEstimatedRowsToScan()), rhsPlan.getEstimatedRowsToScan());
         return new ExplainPlan(steps);
     }
 
@@ -226,6 +239,26 @@ public class SortMergeJoinPlan implements QueryPlan {
         return false;
     }
     
+    private static SQLException closeIterators(ResultIterator lhsIterator, ResultIterator rhsIterator) {
+        SQLException e = null;
+        try {
+            lhsIterator.close();
+        } catch (Throwable e1) {
+            e = e1 instanceof SQLException ? (SQLException)e1 : new SQLException(e1);
+        }
+        try {
+            rhsIterator.close();
+        } catch (Throwable e2) {
+            SQLException e22 = e2 instanceof SQLException ? (SQLException)e2 : new SQLException(e2);
+            if (e != null) {
+                e.setNextException(e22);
+            } else {
+                e = e22;
+            }
+        }
+        return e;
+    }
+
     private class BasicJoinIterator implements ResultIterator {
         private final ResultIterator lhsIterator;
         private final ResultIterator rhsIterator;
@@ -270,9 +303,11 @@ public class SortMergeJoinPlan implements QueryPlan {
         
         @Override
         public void close() throws SQLException {
-            lhsIterator.close();
-            rhsIterator.close();
+            SQLException e = closeIterators(lhsIterator, rhsIterator);
             queue.close();
+            if (e != null) {
+                throw e;
+            }
         }
 
         @Override
@@ -409,7 +444,7 @@ public class SortMergeJoinPlan implements QueryPlan {
                 return rhsBitSet == ValueBitSet.EMPTY_VALUE_BITSET ?
                         t : TupleProjector.mergeProjectedValue(
                                 t, joinedSchema, destBitSet,
-                                rhs, rhsSchema, rhsBitSet, rhsFieldPosition);
+                                rhs, rhsSchema, rhsBitSet, rhsFieldPosition, true);
             } catch (IOException e) {
                 throw new SQLException(e);
             }
@@ -440,8 +475,10 @@ public class SortMergeJoinPlan implements QueryPlan {
 
         @Override
         public void close() throws SQLException {
-            lhsIterator.close();
-            rhsIterator.close();
+            SQLException e = closeIterators(lhsIterator, rhsIterator);
+            if (e != null) {
+                throw e;
+            }
         }
 
         @Override
@@ -667,4 +704,27 @@ public class SortMergeJoinPlan implements QueryPlan {
         return tableRefs;
     }
 
+    public QueryPlan getLhsPlan() {
+        return lhsPlan;
+    }
+
+    public QueryPlan getRhsPlan() {
+        return rhsPlan;
+    }
+
+    @Override
+    public Long getEstimatedRowsToScan() throws SQLException {
+        if (!explainPlanCalled) {
+            getExplainPlan();
+        }
+        return estimatedRows;
+    }
+
+    @Override
+    public Long getEstimatedBytesToScan() throws SQLException {
+        if (!explainPlanCalled) {
+            getExplainPlan();
+        }
+        return estimatedBytes;
+    }
 }

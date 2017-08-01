@@ -386,7 +386,12 @@ public class ParallelIteratorsSplitTest extends BaseConnectionlessQueryTest {
             public ResultIterator iterator(ParallelScanGrouper scanGrouper) throws SQLException {
                 return ResultIterator.EMPTY_ITERATOR;
             }
-            
+
+            @Override
+            public ResultIterator iterator(ParallelScanGrouper scanGrouper, Scan scan) throws SQLException {
+                return ResultIterator.EMPTY_ITERATOR;
+            }
+
             @Override
             public ResultIterator iterator() throws SQLException {
                 return ResultIterator.EMPTY_ITERATOR;
@@ -466,8 +471,18 @@ public class ParallelIteratorsSplitTest extends BaseConnectionlessQueryTest {
             public boolean useRoundRobinIterator() {
                 return false;
             }
+
+            @Override
+            public Long getEstimatedRowsToScan() {
+                return null;
+            }
+
+            @Override
+            public Long getEstimatedBytesToScan() {
+                return null;
+            }
             
-        }, null, new SpoolingResultIterator.SpoolingResultIteratorFactory(context.getConnection().getQueryServices()));
+        }, null, new SpoolingResultIterator.SpoolingResultIteratorFactory(context.getConnection().getQueryServices()), context.getScan(), false);
         List<KeyRange> keyRanges = parallelIterators.getSplits();
         return keyRanges;
     }

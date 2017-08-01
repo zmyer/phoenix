@@ -1,6 +1,4 @@
 /*
- * Copyright 2010 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -49,6 +47,9 @@ enum MutationCode {
   SCHEMA_NOT_IN_REGION = 17;
   TABLES_EXIST_ON_SCHEMA = 18;
   UNALLOWED_SCHEMA_MUTATION = 19;
+  AUTO_PARTITION_SEQUENCE_NOT_FOUND = 20;
+  CANNOT_COERCE_AUTO_PARTITION_ID = 21;
+  TOO_MANY_INDEXES = 22;
 };
 
 message SharedTableState {
@@ -71,6 +72,8 @@ message MetaDataResponse {
   repeated PFunction function = 8;
   repeated SharedTableState sharedTablesToDelete = 9;
   optional PSchema schema = 10;
+  optional int64 autoPartitionNum = 11;
+  optional int32 viewIndexId = 12;
 }
 
 message GetTableRequest {
@@ -100,6 +103,7 @@ message GetSchemaRequest {
 message CreateTableRequest {
   repeated bytes tableMetadataMutations = 1;
   optional int32 clientVersion = 2;
+  optional bool allocateIndexId = 3;
 }
 
 // each byte array represents a MutationProto instance

@@ -18,6 +18,7 @@
 package org.apache.phoenix.compile;
 
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
@@ -37,22 +38,25 @@ import org.apache.phoenix.expression.IsNullExpression;
 import org.apache.phoenix.expression.KeyValueColumnExpression;
 import org.apache.phoenix.expression.LiteralExpression;
 import org.apache.phoenix.expression.RowKeyColumnExpression;
+import org.apache.phoenix.expression.SingleCellColumnExpression;
 import org.apache.phoenix.expression.visitor.StatelessTraverseNoExpressionVisitor;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixStatement;
 import org.apache.phoenix.jdbc.PhoenixStatement.Operation;
 import org.apache.phoenix.parse.BindParseNode;
+import org.apache.phoenix.parse.ColumnDef;
 import org.apache.phoenix.parse.ColumnParseNode;
 import org.apache.phoenix.parse.CreateTableStatement;
 import org.apache.phoenix.parse.ParseNode;
+import org.apache.phoenix.parse.PrimaryKeyConstraint;
 import org.apache.phoenix.parse.SQLParser;
 import org.apache.phoenix.parse.SelectStatement;
 import org.apache.phoenix.parse.TableName;
 import org.apache.phoenix.query.DelegateConnectionQueryServices;
+import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.ColumnRef;
 import org.apache.phoenix.schema.MetaDataClient;
 import org.apache.phoenix.schema.PDatum;
-import org.apache.phoenix.schema.PMetaData;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.PTable.ViewType;
 import org.apache.phoenix.schema.PTableType;
@@ -76,7 +80,7 @@ public class CreateTableCompiler {
         this.operation = operation;
     }
 
-    public MutationPlan compile(final CreateTableStatement create) throws SQLException {
+    public MutationPlan compile(CreateTableStatement create) throws SQLException {
         final PhoenixConnection connection = statement.getConnection();
         ColumnResolver resolver = FromCompiler.getResolverForCreation(create, connection);
         PTableType type = create.getTableType();
@@ -90,6 +94,31 @@ public class CreateTableCompiler {
         String viewStatementToBe = null;
         byte[][] viewColumnConstantsToBe = null;
         BitSet isViewColumnReferencedToBe = null;
+        // Check whether column families having local index column family suffix or not if present
+        // don't allow creating table.
+        // Also validate the default values expressions.
+        List<ColumnDef> columnDefs = create.getColumnDefs();
+        List<ColumnDef> overideColumnDefs = null;
+        PrimaryKeyConstraint pkConstraint = create.getPrimaryKeyConstraint();
+        for (int i = 0; i < columnDefs.size(); i++) {
+            ColumnDef columnDef = columnDefs.get(i);
+            if(columnDef.getColumnDefName().getFamilyName()!=null && columnDef.getColumnDefName().getFamilyName().contains(QueryConstants.LOCAL_INDEX_COLUMN_FAMILY_PREFIX)) {
+                throw new SQLExceptionInfo.Builder(SQLExceptionCode.UNALLOWED_COLUMN_FAMILY)
+                        .build().buildException();
+            }
+            // False means we do not need the default (because it evaluated to null)
+            if (!columnDef.validateDefault(context, pkConstraint)) {
+                if (overideColumnDefs == null) {
+                    overideColumnDefs = new ArrayList<>(columnDefs);
+                }
+                overideColumnDefs.set(i, new ColumnDef(columnDef, null));
+            }
+        }
+        if (overideColumnDefs != null) {
+            create = new CreateTableStatement (create,overideColumnDefs);
+        }
+        final CreateTableStatement finalCreate = create;
+        
         if (type == PTableType.VIEW) {
             TableRef tableRef = resolver.getTables().get(0);
             int nColumns = tableRef.getTable().getColumns().size();
@@ -132,11 +161,11 @@ public class CreateTableCompiler {
                             // on our connection.
                             new DelegateConnectionQueryServices(connection.getQueryServices()) {
                                 @Override
-                                public PMetaData addTable(PTable table, long resolvedTime) throws SQLException {
-                                    return connection.addTable(table, resolvedTime);
+                                public void addTable(PTable table, long resolvedTime) throws SQLException {
+                                    connection.addTable(table, resolvedTime);
                                 }
                             },
-                            connection, tableRef.getTimeStamp());
+                            connection, tableRef.getCurrentTime()+1);
                     viewColumnConstantsToBe = new byte[nColumns][];
                     ViewWhereExpressionVisitor visitor = new ViewWhereExpressionVisitor(parentToBe, viewColumnConstantsToBe);
                     where.accept(visitor);
@@ -180,7 +209,7 @@ public class CreateTableCompiler {
             @Override
             public MutationState execute() throws SQLException {
                 try {
-                    return client.createTable(create, splits, parent, viewStatement, viewType, viewColumnConstants, isViewColumnReferenced);
+                    return client.createTable(finalCreate, splits, parent, viewStatement, viewType, viewColumnConstants, isViewColumnReferenced);
                 } finally {
                     if (client.getConnection() != connection) {
                         client.getConnection().close();
@@ -211,7 +240,7 @@ public class CreateTableCompiler {
         }
     }
     
-    private static class ViewWhereExpressionVisitor extends StatelessTraverseNoExpressionVisitor<Boolean> {
+    public static class ViewWhereExpressionVisitor extends StatelessTraverseNoExpressionVisitor<Boolean> {
         private boolean isUpdatable = true;
         private final PTable table;
         private int position;
@@ -290,11 +319,16 @@ public class CreateTableCompiler {
         @Override
         public Boolean visit(KeyValueColumnExpression node) {
             try {
-                this.position = table.getColumnFamily(node.getColumnFamily()).getColumn(node.getColumnName()).getPosition();
+                this.position = table.getColumnFamily(node.getColumnFamily()).getPColumnForColumnQualifier(node.getColumnQualifier()).getPosition();
             } catch (SQLException e) {
                 throw new RuntimeException(e); // Impossible
             }
             return Boolean.TRUE;
+        }
+        
+        @Override
+        public Boolean visit(SingleCellColumnExpression node) {
+            return visit(node.getKeyValueExpression());
         }
         
     }

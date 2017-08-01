@@ -33,7 +33,13 @@ import java.util.TimeZone;
 
 import org.apache.commons.lang.time.FastDateFormat;
 import org.apache.phoenix.schema.IllegalDataException;
+import org.apache.phoenix.schema.TypeMismatchException;
 import org.apache.phoenix.schema.types.PDataType;
+import org.apache.phoenix.schema.types.PDataType.PDataCodec;
+import org.apache.phoenix.schema.types.PDate;
+import org.apache.phoenix.schema.types.PTimestamp;
+import org.apache.phoenix.schema.types.PUnsignedDate;
+import org.apache.phoenix.schema.types.PUnsignedTimestamp;
 import org.joda.time.DateTimeZone;
 import org.joda.time.chrono.ISOChronology;
 import org.joda.time.format.DateTimeFormatter;
@@ -41,6 +47,7 @@ import org.joda.time.format.DateTimeFormatterBuilder;
 import org.joda.time.format.ISODateTimeFormat;
 
 import com.google.common.collect.Lists;
+import com.sun.istack.NotNull;
 
 
 @SuppressWarnings({ "serial", "deprecation" })
@@ -73,7 +80,22 @@ public class DateUtil {
     private DateUtil() {
     }
 
-    private static TimeZone getTimeZone(String timeZoneId) {
+    @NotNull
+    public static PDataCodec getCodecFor(PDataType type) {
+        PDataCodec codec = type.getCodec();
+        if (codec != null) {
+            return codec;
+        }
+        if (type == PTimestamp.INSTANCE) {
+            return PDate.INSTANCE.getCodec();
+        } else if (type == PUnsignedTimestamp.INSTANCE) {
+            return PUnsignedDate.INSTANCE.getCodec();
+        } else {
+            throw new RuntimeException(TypeMismatchException.newException(PTimestamp.INSTANCE, type));
+        }
+    }
+    
+    public static TimeZone getTimeZone(String timeZoneId) {
         TimeZone parserTimeZone;
         if (timeZoneId == null) {
             parserTimeZone = DateUtil.DEFAULT_TIME_ZONE;
@@ -172,7 +194,21 @@ public class DateUtil {
     }
 
     public static Timestamp parseTimestamp(String timestampValue) {
-        return new Timestamp(parseDateTime(timestampValue));
+        Timestamp timestamp = new Timestamp(parseDateTime(timestampValue));
+        int period = timestampValue.indexOf('.');
+        if (period > 0) {
+            String nanosStr = timestampValue.substring(period + 1);
+            if (nanosStr.length() > 9)
+                throw new IllegalDataException("nanos > 999999999 or < 0");
+            if(nanosStr.length() > 3 ) {
+                int nanos = Integer.parseInt(nanosStr);
+                for (int i = 0; i < 9 - nanosStr.length(); i++) {
+                    nanos *= 10;
+                }
+                timestamp.setNanos(nanos);
+            }
+        }
+        return timestamp;
     }
 
     /**

@@ -33,8 +33,7 @@ import org.apache.phoenix.util.ReadOnlyProps;
  */
 public final class QueryServicesTestImpl extends BaseQueryServicesImpl {
 
-    private static final int DEFAULT_THREAD_POOL_SIZE = 20;
-    private static final int DEFAULT_QUEUE_SIZE = 0;
+    private static final int DEFAULT_THREAD_POOL_SIZE = 10;
     // TODO: setting this down to 5mb causes insufficient memory exceptions. Need to investigate why
     private static final int DEFAULT_MAX_MEMORY_PERC = 30; // 30% of heap
     private static final int DEFAULT_THREAD_TIMEOUT_MS = 60000*5; //5min
@@ -64,7 +63,7 @@ public final class QueryServicesTestImpl extends BaseQueryServicesImpl {
     public static final int DEFAULT_HCONNECTION_POOL_MAX_SIZE = 10;
     public static final int DEFAULT_HTABLE_MAX_THREADS = 10;
     public static final long DEFAULT_INDEX_POPULATION_WAIT_TIME = 0;
-
+    public static final boolean DEFAULT_TRANSACTIONS_ENABLED = true;
     
     /**
      * Set number of salt buckets lower for sequence table during testing, as a high
@@ -80,12 +79,12 @@ public final class QueryServicesTestImpl extends BaseQueryServicesImpl {
     
     private static QueryServicesOptions getDefaultServicesOptions() {
     	return withDefaults()
+    	        .setTransactionsEnabled(DEFAULT_TRANSACTIONS_ENABLED)
     	        .setExplainChunkCount(DEFAULT_EXPLAIN_CHUNK_COUNT)
                 .setExplainRowCount(DEFAULT_EXPLAIN_ROW_COUNT)
     	        .setSequenceSaltBuckets(DEFAULT_SEQUENCE_TABLE_SALT_BUCKETS)
                 .setMinStatsUpdateFrequencyMs(DEFAULT_MIN_STATS_UPDATE_FREQ_MS)
                 .setThreadPoolSize(DEFAULT_THREAD_POOL_SIZE)
-                .setQueueSize(DEFAULT_QUEUE_SIZE)
                 .setMaxMemoryPerc(DEFAULT_MAX_MEMORY_PERC)
                 .setThreadTimeoutMs(DEFAULT_THREAD_TIMEOUT_MS)
                 .setSpoolThresholdBytes(DEFAULT_SPOOL_THRESHOLD_BYTES)

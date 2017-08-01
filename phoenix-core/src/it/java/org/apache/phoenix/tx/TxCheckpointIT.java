@@ -30,74 +30,78 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Map;
 import java.util.Properties;
 
-import org.apache.phoenix.end2end.BaseHBaseManagedTimeIT;
-import org.apache.phoenix.end2end.Shadower;
+import org.apache.phoenix.end2end.ParallelStatsDisabledIT;
 import org.apache.phoenix.execute.MutationState;
 import org.apache.phoenix.jdbc.PhoenixConnection;
-import org.apache.phoenix.query.BaseTest;
 import org.apache.phoenix.query.QueryServices;
+import org.apache.phoenix.schema.PTableImpl;
+import org.apache.phoenix.transaction.PhoenixTransactionContext.PhoenixVisibilityLevel;
 import org.apache.phoenix.util.PropertiesUtil;
-import org.apache.phoenix.util.ReadOnlyProps;
 import org.apache.phoenix.util.SchemaUtil;
-import org.apache.phoenix.util.TestUtil;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-import com.google.common.collect.Maps;
-
-import co.cask.tephra.Transaction.VisibilityLevel;
-
 @RunWith(Parameterized.class)
-public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
+public class TxCheckpointIT extends ParallelStatsDisabledIT {
 	
 	private final boolean localIndex;
-	private final boolean mutable;
-	private String tableName;
-    private String indexName;
-    private String seqName;
-    private String fullTableName;
+	private final String tableDDLOptions;
 
-	public TxCheckpointIT(boolean localIndex, boolean mutable) {
-		this.localIndex = localIndex;
-		this.mutable = mutable;
-		this.tableName = TestUtil.DEFAULT_DATA_TABLE_NAME;
-        this.indexName = "IDX_" + System.currentTimeMillis();
-        this.seqName = "SEQ_" + System.currentTimeMillis();
-        this.fullTableName = SchemaUtil.getTableName(tableName, tableName);
+	public TxCheckpointIT(boolean localIndex, boolean mutable, boolean columnEncoded) {
+	    StringBuilder optionBuilder = new StringBuilder();
+	    this.localIndex = localIndex;
+	    if (!columnEncoded) {
+	        if (optionBuilder.length()!=0)
+	            optionBuilder.append(",");
+	        optionBuilder.append("COLUMN_ENCODED_BYTES=0");
+	    }
+	    if (!mutable) {
+	        if (optionBuilder.length()!=0)
+	            optionBuilder.append(",");
+	        optionBuilder.append("IMMUTABLE_ROWS=true");
+	        if (!columnEncoded) {
+	            optionBuilder.append(",IMMUTABLE_STORAGE_SCHEME="+PTableImpl.ImmutableStorageScheme.ONE_CELL_PER_COLUMN);
+	        }
+	    }
+	    this.tableDDLOptions = optionBuilder.toString();
 	}
 	
-	@BeforeClass
-    @Shadower(classBeingShadowed = BaseHBaseManagedTimeIT.class)
-    public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(2);
-        props.put(QueryServices.DEFAULT_TABLE_ISTRANSACTIONAL_ATTRIB, Boolean.toString(true));
-        props.put(QueryServices.TRANSACTIONS_ENABLED, Boolean.toString(true));
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
+    private static Connection getConnection() throws SQLException {
+        return getConnection(PropertiesUtil.deepCopy(TEST_PROPERTIES));
+    }
+    
+    private static Connection getConnection(Properties props) throws SQLException {
+        props.setProperty(QueryServices.DEFAULT_TABLE_ISTRANSACTIONAL_ATTRIB, Boolean.toString(true));
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        return conn;
     }
 	
-	@Parameters(name="localIndex = {0} , mutable = {1}")
+	@Parameters(name="TxCheckpointIT_localIndex={0},mutable={1},columnEncoded={2}") // name is used by failsafe as file name in reports
     public static Collection<Boolean[]> data() {
         return Arrays.asList(new Boolean[][] {     
-                 { false, false }, { false, true }, { true, false }, { true, true }  
+                { false, false, false }, { false, false, true }, { false, true, false }, { false, true, true },
+                { true, false, false }, { true, false, true }, { true, true, false }, { true, true, true }
            });
     }
     
     @Test
     public void testUpsertSelectDoesntSeeUpsertedData() throws Exception {
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IDX_" + generateUniqueName();
+        String seqName = "SEQ_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(tableName, tableName);
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(QueryServices.MUTATE_BATCH_SIZE_ATTRIB, Integer.toString(3));
+        props.setProperty(QueryServices.MUTATE_BATCH_SIZE_BYTES_ATTRIB, Integer.toString(512));
         props.setProperty(QueryServices.SCAN_CACHE_SIZE_ATTRIB, Integer.toString(3));
         props.setProperty(QueryServices.SCAN_RESULT_CHUNK_SIZE, Integer.toString(3));
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        Connection conn = getConnection(props);
         conn.setAutoCommit(true);
         conn.createStatement().execute("CREATE SEQUENCE "+seqName);
-        conn.createStatement().execute("CREATE TABLE " + fullTableName + "(pk INTEGER PRIMARY KEY, val INTEGER)"+(!mutable? " IMMUTABLE_ROWS=true" : ""));
+        conn.createStatement().execute("CREATE TABLE " + fullTableName + "(pk INTEGER PRIMARY KEY, val INTEGER)"+tableDDLOptions);
         conn.createStatement().execute("CREATE "+(localIndex? "LOCAL " : "")+"INDEX " + indexName + " ON " + fullTableName + "(val)");
 
         conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES (NEXT VALUE FOR " + seqName + ",1)");
@@ -110,14 +114,31 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
     }
     
     @Test
-    public void testRollbackOfUncommittedDelete() throws Exception {
+    public void testRollbackOfUncommittedDeleteSingleCol() throws Exception {
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IDX_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(tableName, tableName);
+        String indexDDL = "CREATE "+(localIndex? "LOCAL " : "")+"INDEX " + indexName + " ON " + fullTableName + " (v1) INCLUDE(v2)";
+        testRollbackOfUncommittedDelete(indexDDL, fullTableName);
+    }
+
+    @Test
+    public void testRollbackOfUncommittedDeleteMultiCol() throws Exception {
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IDX_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(tableName, tableName);
+        String indexDDL = "CREATE "+(localIndex? "LOCAL " : "")+"INDEX " + indexName + " ON " + fullTableName + " (v1, v2)";
+        testRollbackOfUncommittedDelete(indexDDL, fullTableName);
+    }
+    
+    private void testRollbackOfUncommittedDelete(String indexDDL, String fullTableName) throws Exception {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        Connection conn = getConnection();
         conn.setAutoCommit(false);
         try {
             Statement stmt = conn.createStatement();
-            stmt.execute("CREATE TABLE " + fullTableName + "(k VARCHAR PRIMARY KEY, v1 VARCHAR, v2 VARCHAR)"+(!mutable? " IMMUTABLE_ROWS=true" : ""));
-            stmt.execute("CREATE "+(localIndex? "LOCAL " : "")+"INDEX " + indexName + " ON " + fullTableName + " (v1) INCLUDE(v2)");
+            stmt.execute("CREATE TABLE " + fullTableName + "(k VARCHAR PRIMARY KEY, v1 VARCHAR, v2 VARCHAR)"+tableDDLOptions);
+            stmt.execute(indexDDL);
             
             stmt.executeUpdate("upsert into " + fullTableName + " values('x1', 'y1', 'a1')");
             stmt.executeUpdate("upsert into " + fullTableName + " values('x2', 'y2', 'a2')");
@@ -182,7 +203,7 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
             //assert two rows in index table
             rs = stmt.executeQuery("select k, v1, v2 from " + fullTableName + " ORDER BY v1");
             assertTrue(rs.next());
-            assertEquals("x1", rs.getString(1));
+            assertEquals("x1", rs.getString(1)); // fails here
             assertEquals("y1", rs.getString(2));
             assertEquals("a1", rs.getString(3));
             assertTrue(rs.next());
@@ -197,13 +218,16 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
     
 	@Test
 	public void testCheckpointForUpsertSelect() throws Exception {
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IDX_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(tableName, tableName);
 		Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-		try (Connection conn = DriverManager.getConnection(getUrl(), props);) {
+		try (Connection conn = getConnection()) {
 			conn.setAutoCommit(false);
 			Statement stmt = conn.createStatement();
 
 			stmt.execute("CREATE TABLE " + fullTableName + "(ID BIGINT NOT NULL PRIMARY KEY, v1 VARCHAR, v2 VARCHAR)"
-					+ (!mutable ? " IMMUTABLE_ROWS=true" : ""));
+					+ tableDDLOptions);
 			stmt.execute("CREATE " + (localIndex ? "LOCAL " : "")
 					+ "INDEX " + indexName + " ON " + fullTableName + " (v1) INCLUDE(v2)");
 
@@ -212,17 +236,17 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
             stmt.executeUpdate("upsert into " + fullTableName + " values(3, 'a3', 'b3')");
 			conn.commit();
 
-			upsertRows(conn);
+			upsertRows(conn, fullTableName);
 			conn.rollback();
-			verifyRows(conn, 3);
+			verifyRows(conn, fullTableName, 3);
 
-			upsertRows(conn);
+			upsertRows(conn, fullTableName);
 			conn.commit();
-			verifyRows(conn, 6);
+			verifyRows(conn, fullTableName, 6);
 		}
 	}
 
-	private void verifyRows(Connection conn, int expectedMaxId) throws SQLException {
+	private void verifyRows(Connection conn, String fullTableName, int expectedMaxId) throws SQLException {
 		ResultSet rs;
 		//query the data table
 		rs = conn.createStatement().executeQuery("select /*+ NO_INDEX */ max(id) from " + fullTableName + "");
@@ -237,7 +261,7 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
 		assertFalse(rs.next());
 	}
 
-	private void upsertRows(Connection conn) throws SQLException {
+	private void upsertRows(Connection conn, String fullTableName) throws SQLException {
 		ResultSet rs;
 		MutationState state = conn.unwrap(PhoenixConnection.class)
 				.getMutationState();
@@ -245,7 +269,7 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
 		long wp = state.getWritePointer();
 		conn.createStatement().execute(
 				"upsert into " + fullTableName + " select max(id)+1, 'a4', 'b4' from " + fullTableName + "");
-		assertEquals(VisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT,
+		assertEquals(PhoenixVisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT,
 				state.getVisibilityLevel());
 		assertEquals(wp, state.getWritePointer()); // Make sure write ptr
 													// didn't move
@@ -257,7 +281,7 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
 
 		conn.createStatement().execute(
 				"upsert into " + fullTableName + " select max(id)+1, 'a5', 'b5' from " + fullTableName + "");
-		assertEquals(VisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT,
+		assertEquals(PhoenixVisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT,
 				state.getVisibilityLevel());
 		assertNotEquals(wp, state.getWritePointer()); // Make sure write ptr
 														// moves
@@ -270,7 +294,7 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
 		
 		conn.createStatement().execute(
 				"upsert into " + fullTableName + " select max(id)+1, 'a6', 'b6' from " + fullTableName + "");
-		assertEquals(VisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT,
+		assertEquals(PhoenixVisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT,
 				state.getVisibilityLevel());
 		assertNotEquals(wp, state.getWritePointer()); // Make sure write ptr
 														// moves
@@ -284,15 +308,18 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
 	
 	@Test
     public void testCheckpointForDeleteAndUpsert() throws Exception {
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IDX_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(tableName, tableName);
 		Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
 		ResultSet rs;
-		try (Connection conn = DriverManager.getConnection(getUrl(), props);) {
+		try (Connection conn = getConnection()) {
 			conn.setAutoCommit(false);
 			Statement stmt = conn.createStatement();
 			stmt.execute("CREATE TABLE " + fullTableName + "1(ID1 BIGINT NOT NULL PRIMARY KEY, FK1A INTEGER, FK1B INTEGER)"
-					+ (!mutable ? " IMMUTABLE_ROWS=true" : ""));
+					+ tableDDLOptions);
 			stmt.execute("CREATE TABLE " + fullTableName + "2(ID2 BIGINT NOT NULL PRIMARY KEY, FK2 INTEGER)"
-					+ (!mutable ? " IMMUTABLE_ROWS=true" : ""));
+					+ tableDDLOptions);
 			stmt.execute("CREATE " + (localIndex ? "LOCAL " : "")
 					+ "INDEX " + indexName + " ON " + fullTableName + "1 (FK1B)");
 			
@@ -306,7 +333,7 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
 	        state.startTransaction();
 	        long wp = state.getWritePointer();
 	        conn.createStatement().execute("delete from " + fullTableName + "1 where id1=fk1b AND fk1b=id1");
-	        assertEquals(VisibilityLevel.SNAPSHOT, state.getVisibilityLevel());
+	        assertEquals(PhoenixVisibilityLevel.SNAPSHOT, state.getVisibilityLevel());
 	        assertEquals(wp, state.getWritePointer()); // Make sure write ptr didn't move
 	
 	        rs = conn.createStatement().executeQuery("select /*+ NO_INDEX */ id1 from " + fullTableName + "1");
@@ -324,7 +351,7 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
 	        assertFalse(rs.next());
 	
 	        conn.createStatement().execute("delete from " + fullTableName + "1 where id1 in (select fk1a from " + fullTableName + "1 join " + fullTableName + "2 on (fk2=id1))");
-	        assertEquals(VisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT, state.getVisibilityLevel());
+	        assertEquals(PhoenixVisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT, state.getVisibilityLevel());
 	        assertNotEquals(wp, state.getWritePointer()); // Make sure write ptr moved
 	
 	        rs = conn.createStatement().executeQuery("select /*+ NO_INDEX */ id1 from " + fullTableName + "1");
@@ -341,7 +368,7 @@ public class TxCheckpointIT extends BaseHBaseManagedTimeIT {
             stmt.executeUpdate("upsert into " + fullTableName + "2 values (2, 4)");
 
             conn.createStatement().execute("delete from " + fullTableName + "1 where id1 in (select fk1a from " + fullTableName + "1 join " + fullTableName + "2 on (fk2=id1))");
-            assertEquals(VisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT, state.getVisibilityLevel());
+            assertEquals(PhoenixVisibilityLevel.SNAPSHOT_EXCLUDE_CURRENT, state.getVisibilityLevel());
             assertNotEquals(wp, state.getWritePointer()); // Make sure write ptr moved
     
             rs = conn.createStatement().executeQuery("select /*+ NO_INDEX */ id1 from " + fullTableName + "1");

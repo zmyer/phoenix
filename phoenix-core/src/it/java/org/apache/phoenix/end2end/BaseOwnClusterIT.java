@@ -1,9 +1,7 @@
 /*
- * Copyright 2010 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
- *distributed with this work for additional information
+ * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you maynot use this file except in compliance
@@ -19,14 +17,17 @@
  */
 package org.apache.phoenix.end2end;
 
-import org.apache.phoenix.query.BaseTest;
-import org.junit.AfterClass;
-import org.junit.experimental.categories.Category;
+import org.apache.hadoop.hbase.HConstants;
+import org.junit.After;
 
-@Category(NeedsOwnMiniClusterTest.class)
-public class BaseOwnClusterIT extends BaseTest {
-    @AfterClass
-    public static void doTeardown() throws Exception {
-        tearDownMiniCluster();
+/**
+ * Base class for tests that need their own mini cluster. Classes that extend this base class don't necessarily have to
+ * use unique names for tables and sequences. Any new integration tests that need their own mini cluster should be
+ * extending {@link BaseUniqueNamesOwnClusterIT} class directly.
+ */
+public class BaseOwnClusterIT extends BaseUniqueNamesOwnClusterIT {
+    @After
+    public void cleanUpAfterTest() throws Exception {
+        deletePriorMetaData(HConstants.LATEST_TIMESTAMP, getUrl());
     }
 }

@@ -17,10 +17,11 @@
  */
 package org.apache.phoenix.execute;
 
+import static org.apache.phoenix.util.NumberUtil.add;
+
 import java.sql.ParameterMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -33,6 +34,7 @@ import org.apache.phoenix.compile.RowProjector;
 import org.apache.phoenix.compile.ScanRanges;
 import org.apache.phoenix.compile.StatementContext;
 import org.apache.phoenix.iterate.ConcatResultIterator;
+import org.apache.phoenix.iterate.DefaultParallelScanGrouper;
 import org.apache.phoenix.iterate.LimitingResultIterator;
 import org.apache.phoenix.iterate.MergeSortTopNResultIterator;
 import org.apache.phoenix.iterate.OffsetResultIterator;
@@ -43,7 +45,6 @@ import org.apache.phoenix.jdbc.PhoenixStatement.Operation;
 import org.apache.phoenix.parse.FilterableStatement;
 import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.schema.TableRef;
-import org.apache.phoenix.util.SQLCloseable;
 
 import com.google.common.collect.Sets;
 
@@ -63,6 +64,9 @@ public class UnionPlan implements QueryPlan {
     private final boolean isDegenerate;
     private final List<QueryPlan> plans;
     private UnionResultIterators iterators;
+    private Long estimatedRows;
+    private Long estimatedBytes;
+    private boolean explainPlanCalled;
 
     public UnionPlan(StatementContext context, FilterableStatement statement, TableRef table, RowProjector projector,
             Integer limit, Integer offset, OrderBy orderBy, GroupBy groupBy, List<QueryPlan> plans, ParameterMetaData paramMetaData) throws SQLException {
@@ -81,7 +85,7 @@ public class UnionPlan implements QueryPlan {
             if (plan.getContext().getScanRanges() != ScanRanges.NOTHING) {
                 isDegen = false;
                 break;
-            } 
+            }
         }
         this.isDegenerate = isDegen;     
     }
@@ -134,18 +138,19 @@ public class UnionPlan implements QueryPlan {
     public RowProjector getProjector() {
         return projector;
     }
-
-    @Override
-    public final ResultIterator iterator(ParallelScanGrouper scanGrouper) throws SQLException {
-        return iterator(Collections.<SQLCloseable>emptyList());
-    }
     
     @Override
-    public final ResultIterator iterator() throws SQLException {
-        return iterator(Collections.<SQLCloseable>emptyList());
+    public ResultIterator iterator() throws SQLException {
+        return iterator(DefaultParallelScanGrouper.getInstance());
     }
 
-    public final ResultIterator iterator(final List<? extends SQLCloseable> dependencies) throws SQLException {
+    @Override
+    public ResultIterator iterator(ParallelScanGrouper scanGrouper) throws SQLException {
+        return iterator(scanGrouper, null);
+    }
+
+    @Override
+    public final ResultIterator iterator(ParallelScanGrouper scanGrouper, Scan scan) throws SQLException {
         this.iterators = new UnionResultIterators(plans, parentContext);
         ResultIterator scanner;      
         boolean isOrdered = !orderBy.getOrderByExpressions().isEmpty();
@@ -166,14 +171,19 @@ public class UnionPlan implements QueryPlan {
 
     @Override
     public ExplainPlan getExplainPlan() throws SQLException {
+        explainPlanCalled = true;
         List<String> steps = new ArrayList<String>();
         steps.add("UNION ALL OVER " + this.plans.size() + " QUERIES");
         ResultIterator iterator = iterator();
         iterator.explain(steps);
         // Indent plans steps nested under union, except last client-side merge/concat step (if there is one)
-        int offset = !orderBy.getOrderByExpressions().isEmpty() || limit != null ? 1 : 0;
+        int offset = !orderBy.getOrderByExpressions().isEmpty() && limit != null ? 2 : limit != null ? 1 : 0;
         for (int i = 1 ; i < steps.size()-offset; i++) {
             steps.set(i, "    " + steps.get(i));
+        }
+        for (QueryPlan plan : plans) {
+            estimatedRows = add(estimatedRows, plan.getEstimatedRowsToScan());
+            estimatedBytes = add(estimatedBytes, plan.getEstimatedBytesToScan());
         }
         return new ExplainPlan(steps);
     }
@@ -227,4 +237,20 @@ public class UnionPlan implements QueryPlan {
 		}
 		return sources;
 	}
+
+    @Override
+    public Long getEstimatedRowsToScan() throws SQLException {
+        if (!explainPlanCalled) {
+            getExplainPlan();
+        }
+        return estimatedRows;
+    }
+
+    @Override
+    public Long getEstimatedBytesToScan() throws SQLException {
+        if (!explainPlanCalled) {
+            getExplainPlan();
+        }
+        return estimatedBytes;
+    }
 }

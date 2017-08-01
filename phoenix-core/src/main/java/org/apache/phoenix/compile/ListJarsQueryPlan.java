@@ -57,6 +57,7 @@ import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PColumnImpl;
+import org.apache.phoenix.schema.PName;
 import org.apache.phoenix.schema.PNameFactory;
 import org.apache.phoenix.schema.RowKeyValueAccessor;
 import org.apache.phoenix.schema.SortOrder;
@@ -77,10 +78,11 @@ public class ListJarsQueryPlan implements QueryPlan {
     
     static {
         List<ExpressionProjector> projectedColumns = new ArrayList<ExpressionProjector>();
+        PName colName = PNameFactory.newName("jar_location");
         PColumn column =
-                new PColumnImpl(PNameFactory.newName("jar_location"), null,
+                new PColumnImpl(colName, null,
                         PVarchar.INSTANCE, null, null, false, 0, SortOrder.getDefault(), 0, null,
-                        false, null, false, false);
+                        false, null, false, false, colName.getBytes());
         List<PColumn> columns = new ArrayList<PColumn>();
         columns.add(column);
         Expression expression =
@@ -116,6 +118,10 @@ public class ListJarsQueryPlan implements QueryPlan {
         return iterator(DefaultParallelScanGrouper.getInstance());
     }
 
+    @Override
+    public ResultIterator iterator(ParallelScanGrouper scanGrouper, Scan s) throws SQLException {
+        return iterator(scanGrouper);
+    }
     @Override
     public ResultIterator iterator(ParallelScanGrouper scanGrouper) throws SQLException {
         return new ResultIterator() {
@@ -247,4 +253,14 @@ public class ListJarsQueryPlan implements QueryPlan {
 	public Operation getOperation() {
 		return stmt.getUpdateOperation();
 	}
+
+    @Override
+    public Long getEstimatedRowsToScan() {
+        return 0l;
+    }
+
+    @Override
+    public Long getEstimatedBytesToScan() {
+        return 0l;
+    }
 }

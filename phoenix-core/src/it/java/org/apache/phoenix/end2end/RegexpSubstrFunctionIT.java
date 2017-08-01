@@ -17,7 +17,7 @@
  */
 package org.apache.phoenix.end2end;
 
-import static org.apache.phoenix.util.TestUtil.GROUPBYTEST_NAME;
+import static org.apache.phoenix.util.TestUtil.createGroupByTestTable;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -33,14 +33,16 @@ import org.junit.Before;
 import org.junit.Test;
 
 
-public class RegexpSubstrFunctionIT extends BaseHBaseManagedTimeIT {
+public class RegexpSubstrFunctionIT extends ParallelStatsDisabledIT {
 
     private int id;
+    String tableName;
 
     @Before
     public void doBeforeTestSetup() throws Exception {
-        ensureTableCreated(getUrl(), GROUPBYTEST_NAME);
+        tableName = generateUniqueName();
         Connection conn = DriverManager.getConnection(getUrl());
+        createGroupByTestTable(conn, tableName);
         insertRow(conn, "Report1?1", 10);
         insertRow(conn, "Report1?2", 10);
         insertRow(conn, "Report2?1", 30);
@@ -50,7 +52,7 @@ public class RegexpSubstrFunctionIT extends BaseHBaseManagedTimeIT {
     }
 
     private void insertRow(Connection conn, String uri, int appcpu) throws SQLException {
-        PreparedStatement statement = conn.prepareStatement("UPSERT INTO " + GROUPBYTEST_NAME + "(id, uri, appcpu) values (?,?,?)");
+        PreparedStatement statement = conn.prepareStatement("UPSERT INTO " + tableName + "(id, uri, appcpu) values (?,?,?)");
         statement.setString(1, "id" + id);
         statement.setString(2, uri);
         statement.setInt(3, appcpu);
@@ -59,7 +61,7 @@ public class RegexpSubstrFunctionIT extends BaseHBaseManagedTimeIT {
     }
 
     private void testGroupByScanWithRegexpSubstr(Connection conn, Integer offset, String exceptedSubstr) throws Exception {
-        String cmd = "select REGEXP_SUBSTR(uri, '[^\\\\?]+'" + ((offset == null) ? "" : ", " + offset.intValue()) +") suburi, sum(appcpu) sumcpu from " + GROUPBYTEST_NAME + " group by suburi";
+        String cmd = "select REGEXP_SUBSTR(uri, '[^\\\\?]+'" + ((offset == null) ? "" : ", " + offset.intValue()) +") suburi, sum(appcpu) sumcpu from " + tableName + " group by suburi";
         Statement stmt = conn.createStatement();
         ResultSet rs = stmt.executeQuery(cmd);
         assertTrue(rs.next());
@@ -87,7 +89,7 @@ public class RegexpSubstrFunctionIT extends BaseHBaseManagedTimeIT {
     }
 
     private void testFilterWithRegexSubstr(Connection conn, Integer offset, String exceptedSubstr) throws Exception {
-        String cmd = "select id from " + GROUPBYTEST_NAME + " where REGEXP_SUBSTR(uri, '[^\\\\?]+'"+ ((offset == null) ? "" : ", " + offset.intValue()) +") = '" + exceptedSubstr + "1'";
+        String cmd = "select id from " + tableName + " where REGEXP_SUBSTR(uri, '[^\\\\?]+'"+ ((offset == null) ? "" : ", " + offset.intValue()) +") = '" + exceptedSubstr + "1'";
         ResultSet rs = conn.createStatement().executeQuery(cmd);
         assertTrue(rs.next());
         assertEquals("id0", rs.getString(1));

@@ -30,10 +30,10 @@ import java.sql.ResultSet;
 import org.junit.Test;
 
 
-public class ReverseFunctionIT extends BaseHBaseManagedTimeTableReuseIT {
+public class ReverseFunctionIT extends ParallelStatsDisabledIT {
 
     private String initTable(Connection conn, String sortOrder, String s) throws Exception {
-        String reverseTest =  generateRandomString();
+        String reverseTest =  generateUniqueName();
         String ddl = "CREATE TABLE " + reverseTest + " (pk VARCHAR NOT NULL PRIMARY KEY " + sortOrder + ", kv VARCHAR)";
         conn.createStatement().execute(ddl);
         String dml = "UPSERT INTO " + reverseTest + " VALUES(?)";

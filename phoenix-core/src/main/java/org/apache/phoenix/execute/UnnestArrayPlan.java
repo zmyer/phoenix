@@ -20,6 +20,7 @@ package org.apache.phoenix.execute;
 import java.sql.SQLException;
 import java.util.List;
 
+import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.phoenix.compile.ExplainPlan;
 import org.apache.phoenix.compile.QueryPlan;
@@ -27,12 +28,12 @@ import org.apache.phoenix.expression.BaseSingleExpression;
 import org.apache.phoenix.expression.BaseTerminalExpression;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.visitor.ExpressionVisitor;
-import org.apache.phoenix.iterate.DefaultParallelScanGrouper;
 import org.apache.phoenix.iterate.DelegateResultIterator;
 import org.apache.phoenix.iterate.ParallelScanGrouper;
 import org.apache.phoenix.iterate.ResultIterator;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.schema.types.PArrayDataType;
+import org.apache.phoenix.schema.types.PArrayDataTypeDecoder;
 import org.apache.phoenix.schema.types.PDataType;
 import org.apache.phoenix.schema.types.PInteger;
 
@@ -47,13 +48,8 @@ public class UnnestArrayPlan extends DelegateQueryPlan {
     }
 
     @Override
-    public ResultIterator iterator() throws SQLException {
-        return iterator(DefaultParallelScanGrouper.getInstance());
-    }
-
-    @Override
-    public ResultIterator iterator(ParallelScanGrouper scanGrouper) throws SQLException {
-        return new UnnestArrayResultIterator(delegate.iterator(scanGrouper));
+    public ResultIterator iterator(ParallelScanGrouper scanGrouper, Scan scan) throws SQLException {
+        return new UnnestArrayResultIterator(delegate.iterator(scanGrouper, scan));
     }
 
     @Override
@@ -143,7 +139,7 @@ public class UnnestArrayPlan extends DelegateQueryPlan {
         @Override
         public boolean evaluate(Tuple tuple, ImmutableBytesWritable ptr) {
             ptr.set(arrayPtr.get(), arrayPtr.getOffset(), arrayPtr.getLength());
-            PArrayDataType.positionAtArrayElement(ptr, index++, getDataType(), getMaxLength());
+            PArrayDataTypeDecoder.positionAtArrayElement(ptr, index++, getDataType(), getMaxLength());
             return true;
         }
 

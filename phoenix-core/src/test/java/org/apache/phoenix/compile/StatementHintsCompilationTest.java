@@ -101,17 +101,17 @@ public class StatementHintsCompilationTest extends BaseConnectionlessQueryTest {
         assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER EH ['111111111111111','foo            ','2012-11-01 00:00:00.000'] - ['111111111111111','fop            ','2012-11-30 00:00:00.000']\n" + 
                 "    SERVER FILTER BY FIRST KEY ONLY AND (CREATED_DATE >= DATE '2012-11-01 00:00:00.000' AND CREATED_DATE < DATE '2012-11-30 00:00:00.000')\n" + 
                 "    SERVER TOP 100 ROWS SORTED BY [ORGANIZATION_ID, PARENT_ID, CREATED_DATE DESC, ENTITY_HISTORY_ID]\n" + 
-                "CLIENT MERGE SORT",QueryUtil.getExplainPlan(rs));
+                "CLIENT MERGE SORT\nCLIENT LIMIT 100",QueryUtil.getExplainPlan(rs));
     }
 
     @Test
     public void testSerialHint() throws Exception {
-        // test ScanPlan
+        // test AggregatePlan
         String query = "SELECT /*+ SERIAL */ COUNT(*) FROM atable";
         assertTrue("Expected a SERIAL query", compileStatement(query).getExplainPlan().getPlanSteps().get(0).contains("SERIAL"));
 
-        // test AggregatePlan
-        query = "SELECT /*+ SERIAL */ * FROM atable";
-        assertTrue("Expected a SERIAL query", compileStatement(query).getExplainPlan().getPlanSteps().get(0).contains("SERIAL"));
+        // test ScanPlan
+        query = "SELECT /*+ SERIAL */ * FROM atable limit 10";
+        assertTrue("Expected a SERIAL query", compileStatement(query, Collections.emptyList(), 10).getExplainPlan().getPlanSteps().get(0).contains("SERIAL"));
     }
 }

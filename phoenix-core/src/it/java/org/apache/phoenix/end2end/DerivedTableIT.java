@@ -18,6 +18,7 @@
 
 package org.apache.phoenix.end2end;
 
+import static org.apache.phoenix.util.TestUtil.ATABLE_NAME;
 import static org.apache.phoenix.util.TestUtil.A_VALUE;
 import static org.apache.phoenix.util.TestUtil.B_VALUE;
 import static org.apache.phoenix.util.TestUtil.C_VALUE;
@@ -73,7 +74,7 @@ public class DerivedTableIT extends BaseClientManagedTimeIT {
     @Before
     public void initTable() throws Exception {
          ts = nextTimestamp();
-        initATableValues(tenantId, getDefaultSplits(tenantId), null, ts);
+        initATableValues(ATABLE_NAME, tenantId, getDefaultSplits(tenantId), null, ts, getUrl(), null);
         if (indexDDL != null && indexDDL.length > 0) {
             Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
             props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts));
@@ -84,7 +85,7 @@ public class DerivedTableIT extends BaseClientManagedTimeIT {
         }
     }
     
-    @Parameters(name="{0}")
+    @Parameters(name="DerivedTableIT_{index}") // name is used by failsafe as file name in reports
     public static Collection<Object> data() {
         List<Object> testCases = Lists.newArrayList();
         testCases.add(new String[][] {
@@ -222,6 +223,17 @@ public class DerivedTableIT extends BaseClientManagedTimeIT {
             rs = statement.executeQuery();
             assertTrue (rs.next());
             assertEquals(ROW2,rs.getString(1));
+
+            assertFalse(rs.next());
+            
+            // ((where limit) where limit) limit
+            query = "SELECT u.eid FROM (SELECT t.eid FROM (SELECT entity_id eid, b_string b FROM aTable WHERE a_string = '" + B_VALUE + "' LIMIT 5) AS t WHERE t.b = '" + C_VALUE + "' LIMIT 4) AS u WHERE u.eid >= '" + ROW1 + "' LIMIT 3";
+            statement = conn.prepareStatement(query);
+            rs = statement.executeQuery();
+            assertTrue (rs.next());
+            assertEquals(ROW5,rs.getString(1));
+            assertTrue (rs.next());
+            assertEquals(ROW8,rs.getString(1));
 
             assertFalse(rs.next());
 

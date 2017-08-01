@@ -11,8 +11,6 @@ package org.apache.phoenix.end2end.index;
 
 import static org.apache.phoenix.query.QueryConstants.MILLIS_IN_DAY;
 import static org.apache.phoenix.util.TestUtil.INDEX_DATA_SCHEMA;
-import static org.apache.phoenix.util.TestUtil.INDEX_DATA_TABLE;
-import static org.apache.phoenix.util.TestUtil.MUTABLE_INDEX_DATA_TABLE;
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -30,7 +28,7 @@ import java.sql.SQLException;
 import java.util.Properties;
 
 import org.apache.commons.lang.StringUtils;
-import org.apache.phoenix.end2end.BaseHBaseManagedTimeIT;
+import org.apache.phoenix.end2end.ParallelStatsDisabledIT;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.execute.CommitException;
 import org.apache.phoenix.query.QueryConstants;
@@ -38,9 +36,10 @@ import org.apache.phoenix.util.DateUtil;
 import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.QueryUtil;
+import org.apache.phoenix.util.TestUtil;
 import org.junit.Test;
 
-public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
+public class IndexExpressionIT extends ParallelStatsDisabledIT {
 
     @Test
     public void testImmutableIndexCreateAndUpdate() throws Exception {
@@ -111,25 +110,31 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
         assertEquals(i, rs.getLong(12));
     }
 
+    private void createDataTable(Connection conn, String dataTableName, String tableProps) throws SQLException {
+        String tableDDL = "create table " + dataTableName + TestUtil.TEST_TABLE_SCHEMA + tableProps;
+        conn.createStatement().execute(tableDDL);
+    }
+    
     protected void helpTestCreateAndUpdate(boolean mutable, boolean localIndex) throws Exception {
-        String dataTableName = mutable ? MUTABLE_INDEX_DATA_TABLE : INDEX_DATA_TABLE;
+        String dataTableName = generateUniqueName();
         String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            populateDataTable(conn, dataTableName);
+            createDataTable(conn, fullDataTableName, mutable ? "" : "IMMUTABLE_ROWS=true");
+            populateDataTable(conn, fullDataTableName);
 
             // create an expression index
             String ddl = "CREATE "
                     + (localIndex ? "LOCAL" : "")
-                    + " INDEX IDX ON "
+                    + " INDEX " + indexName + " ON "
                     + fullDataTableName
                     + " ((UPPER(varchar_pk) || '_' || UPPER(char_pk) || '_' || UPPER(varchar_col1) || '_' || UPPER(b.char_col2)),"
                     + " (decimal_pk+int_pk+decimal_col2+int_col1)," + " date_pk+1, date1+1, date2+1 )"
                     + " INCLUDE (long_col1, long_col2)";
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
+            conn.createStatement().execute(ddl);
 
             // run select query with expression in WHERE clause
             String whereSql = "SELECT long_col1, long_col2 from "
@@ -139,7 +144,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
                     // since a.date1 and b.date2 are NULLABLE and date is fixed width, these expressions are stored as
                     // DECIMAL in the index (which is not fixed width)
                     + " AND date_pk+1=? AND date1+1=? AND date2+1=?";
-            stmt = conn.prepareStatement(whereSql);
+            PreparedStatement stmt = conn.prepareStatement(whereSql);
             stmt.setString(1, "VARCHAR1_CHAR1     _A.VARCHAR1_B.CHAR1   ");
             stmt.setInt(2, 3);
             Date date = DateUtil.parseDate("2015-01-02 00:00:00");
@@ -150,10 +155,10 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             // verify that the query does a range scan on the index table
             ResultSet rs = stmt.executeQuery("EXPLAIN " + whereSql);
             assertEquals(
-                    localIndex ? "CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_INDEX_TEST."
+                    localIndex ? "CLIENT PARALLEL 1-WAY RANGE SCAN OVER INDEX_TEST."
                             + dataTableName
-                            + " [-32768,'VARCHAR1_CHAR1     _A.VARCHAR1_B.CHAR1   ',3,'2015-01-02 00:00:00.000',1,420,156,800,000,1,420,156,800,000]\nCLIENT MERGE SORT"
-                            : "CLIENT PARALLEL 1-WAY RANGE SCAN OVER INDEX_TEST.IDX ['VARCHAR1_CHAR1     _A.VARCHAR1_B.CHAR1   ',3,'2015-01-02 00:00:00.000',1,420,156,800,000,1,420,156,800,000]",
+                            + " [1,'VARCHAR1_CHAR1     _A.VARCHAR1_B.CHAR1   ',3,'2015-01-02 00:00:00.000',1,420,156,800,000,1,420,156,800,000]\nCLIENT MERGE SORT"
+                            : "CLIENT PARALLEL 1-WAY RANGE SCAN OVER INDEX_TEST." + indexName + " ['VARCHAR1_CHAR1     _A.VARCHAR1_B.CHAR1   ',3,'2015-01-02 00:00:00.000',1,420,156,800,000,1,420,156,800,000]",
                     QueryUtil.getExplainPlan(rs));
 
             // verify that the correct results are returned
@@ -172,8 +177,8 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
                     + "from "
                     + fullDataTableName;
             rs = conn.createStatement().executeQuery("EXPLAIN " + indexSelectSql);
-            assertEquals(localIndex ? "CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_" + fullDataTableName
-                    + " [-32768]\nCLIENT MERGE SORT" : "CLIENT PARALLEL 1-WAY FULL SCAN OVER INDEX_TEST.IDX",
+            assertEquals(localIndex ? "CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + fullDataTableName
+                    + " [1]\nCLIENT MERGE SORT" : "CLIENT PARALLEL 1-WAY FULL SCAN OVER INDEX_TEST." + indexName,
                     QueryUtil.getExplainPlan(rs));
             rs = conn.createStatement().executeQuery(indexSelectSql);
             verifyResult(rs, 1);
@@ -195,7 +200,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             verifyResult(rs, 3);
             verifyResult(rs, 4);
 
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
@@ -203,27 +208,32 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testMutableIndexUpdate() throws Exception {
-    	helpTestUpdate(false);
+        String dataTableName = generateUniqueName();
+        String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
+    	helpTestUpdate(fullDataTableName, indexName, false);
     }
 
     @Test
     public void testMutableLocalIndexUpdate() throws Exception {
-    	helpTestUpdate(true);
+        String dataTableName = generateUniqueName();
+        String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
+        helpTestUpdate(fullDataTableName, indexName, true);
     }
     
-    protected void helpTestUpdate(boolean localIndex) throws Exception {
-        String dataTableName = MUTABLE_INDEX_DATA_TABLE;
-        String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+    protected void helpTestUpdate(String fullDataTableName, String indexName, boolean localIndex) throws Exception {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            populateDataTable(conn, dataTableName);
+            createDataTable(conn, fullDataTableName, "");
+            populateDataTable(conn, fullDataTableName);
 
             // create an expression index
             String ddl = "CREATE "
                     + (localIndex ? "LOCAL" : "")
-                    + " INDEX IDX ON "
+                    + " INDEX " + indexName + " ON "
                     + fullDataTableName
                     + " ((UPPER(varchar_pk) || '_' || UPPER(char_pk) || '_' || UPPER(varchar_col1) || '_' || UPPER(char_col2)),"
                     + " (decimal_pk+int_pk+decimal_col2+int_col1)," + " date_pk+1, date1+1, date2+1 )"
@@ -269,15 +279,14 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertEquals("VARCHAR2_CHAR2     _A.VARCHAR2_B.CHAR2   ", rs.getString(1));
             assertEquals(2, rs.getLong(2));
             assertFalse(rs.next());
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
     }
 
     private void populateDataTable(Connection conn, String dataTable) throws SQLException {
-        ensureTableCreated(getUrl(), dataTable);
-        String upsert = "UPSERT INTO " + INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTable
+        String upsert = "UPSERT INTO " + dataTable
                 + " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         PreparedStatement stmt1 = conn.prepareStatement(upsert);
         // insert two rows
@@ -307,19 +316,19 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
 
     protected void helpTestDeleteIndexedExpression(boolean mutable, boolean localIndex) throws Exception {
-        String dataTableName = mutable ? MUTABLE_INDEX_DATA_TABLE : INDEX_DATA_TABLE;
+        String dataTableName = generateUniqueName();
         String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
-        String fullIndexTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + "IDX";
+        String indexName = generateUniqueName();
+        String fullIndexTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + indexName;
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            ensureTableCreated(getUrl(), dataTableName);
-            populateDataTable(conn, dataTableName);
-            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX IDX ON " + fullDataTableName
+            createDataTable(conn, fullDataTableName, mutable ? "" : "IMMUTABLE_ROWS=true");
+            populateDataTable(conn, fullDataTableName);
+            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + fullDataTableName
                     + " (2*long_col2)";
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
+            conn.createStatement().execute(ddl);
 
             ResultSet rs;
             rs = conn.createStatement().executeQuery("SELECT COUNT(*) FROM " + fullDataTableName);
@@ -353,7 +362,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             rs = conn.createStatement().executeQuery("SELECT COUNT(*) FROM " + fullIndexTableName);
             assertTrue(rs.next());
             assertEquals(1, rs.getInt(1));
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
@@ -380,19 +389,19 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
 
     protected void helpTestDeleteCoveredCol(boolean mutable, boolean localIndex) throws Exception {
-        String dataTableName = mutable ? MUTABLE_INDEX_DATA_TABLE : INDEX_DATA_TABLE;
+        String dataTableName = generateUniqueName();
         String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
-        String fullIndexTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + "IDX";
+        String indexName = generateUniqueName();
+        String fullIndexTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + indexName;
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            ensureTableCreated(getUrl(), dataTableName);
-            populateDataTable(conn, dataTableName);
-            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX IDX ON " + fullDataTableName
+            createDataTable(conn, fullDataTableName, mutable ? "" : "IMMUTABLE_ROWS=true");
+            populateDataTable(conn, fullDataTableName);
+            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + fullDataTableName
                     + " (long_pk, varchar_pk, 1+long_pk, UPPER(varchar_pk) )" + " INCLUDE (long_col1, long_col2)";
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
+            conn.createStatement().execute(ddl);
 
             ResultSet rs;
             rs = conn.createStatement().executeQuery("SELECT COUNT(*) FROM " + fullDataTableName);
@@ -401,7 +410,12 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             rs = conn.createStatement().executeQuery("SELECT COUNT(*) FROM " + fullIndexTableName);
             assertTrue(rs.next());
             assertEquals(2, rs.getInt(1));
-
+            
+            String sql = "SELECT LONG_COL1 from " + fullDataTableName + " WHERE LONG_COL2 = 2";
+            rs = conn.createStatement().executeQuery(sql);
+            assertTrue(rs.next());
+            assertFalse(rs.next());
+            
             String dml = "DELETE from " + fullDataTableName + " WHERE long_col2 = 2";
             assertEquals(1, conn.createStatement().executeUpdate(dml));
             conn.commit();
@@ -434,7 +448,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertEquals(2L, rs.getLong(3));
             assertEquals("VARCHAR1", rs.getString(4));
             assertFalse(rs.next());
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
@@ -461,24 +475,25 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
 
     protected void helpTestGroupByCount(boolean mutable, boolean localIndex) throws Exception {
-        String dataTableName = mutable ? MUTABLE_INDEX_DATA_TABLE : INDEX_DATA_TABLE;
+        String dataTableName = generateUniqueName();
         String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            populateDataTable(conn, dataTableName);
-            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX IDX ON " + fullDataTableName
+            createDataTable(conn, fullDataTableName, mutable ? "" : "IMMUTABLE_ROWS=true");
+            populateDataTable(conn, fullDataTableName);
+            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + fullDataTableName
                     + " (int_col1+int_col2)";
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
+            conn.createStatement().execute(ddl);
 
             String groupBySql = "SELECT (int_col1+int_col2), COUNT(*) FROM " + fullDataTableName
                     + " GROUP BY (int_col1+int_col2)";
             ResultSet rs = conn.createStatement().executeQuery("EXPLAIN " + groupBySql);
             String expectedPlan = "CLIENT PARALLEL 1-WAY "
-                    + (localIndex ? "RANGE SCAN OVER _LOCAL_IDX_" + fullDataTableName + " [-32768]"
-                            : "FULL SCAN OVER INDEX_TEST.IDX")
+                    + (localIndex ? "RANGE SCAN OVER " + fullDataTableName + " [1]"
+                            : "FULL SCAN OVER INDEX_TEST." + indexName)
                     + "\n    SERVER FILTER BY FIRST KEY ONLY\n    SERVER AGGREGATE INTO ORDERED DISTINCT ROWS BY [TO_BIGINT(\"(A.INT_COL1 + B.INT_COL2)\")]" 
                     + (localIndex ? "\nCLIENT MERGE SORT" : "");
             assertEquals(expectedPlan, QueryUtil.getExplainPlan(rs));
@@ -488,7 +503,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertTrue(rs.next());
             assertEquals(1, rs.getInt(2));
             assertFalse(rs.next());
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
@@ -515,23 +530,24 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
 
     protected void helpTestSelectDistinct(boolean mutable, boolean localIndex) throws Exception {
-        String dataTableName = mutable ? MUTABLE_INDEX_DATA_TABLE : INDEX_DATA_TABLE;
+        String dataTableName = generateUniqueName();
         String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            populateDataTable(conn, dataTableName);
-            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX IDX ON " + fullDataTableName
+            createDataTable(conn, fullDataTableName, mutable ? "" : "IMMUTABLE_ROWS=true");
+            populateDataTable(conn, fullDataTableName);
+            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + fullDataTableName
                     + " (int_col1+1)";
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
+            conn.createStatement().execute(ddl);
             String sql = "SELECT distinct int_col1+1 FROM " + fullDataTableName + " where int_col1+1 > 0";
             ResultSet rs = conn.createStatement().executeQuery("EXPLAIN " + sql);
             String expectedPlan = "CLIENT PARALLEL 1-WAY RANGE SCAN OVER "
-                    + (localIndex ? "_LOCAL_IDX_" + fullDataTableName + " [-32768,0] - [-32768,*]"
-                            : "INDEX_TEST.IDX [0] - [*]")
-                    + "\n    SERVER FILTER BY FIRST KEY ONLY\n    SERVER AGGREGATE INTO ORDERED DISTINCT ROWS BY [TO_BIGINT(\"(A.INT_COL1 + 1)\")]"
+                    + (localIndex ? fullDataTableName + " [1,0] - [1,*]"
+                            : "INDEX_TEST." + indexName + " [0] - [*]")
+                    + "\n    SERVER FILTER BY FIRST KEY ONLY\n    SERVER DISTINCT PREFIX FILTER OVER [TO_BIGINT(\"(A.INT_COL1 + 1)\")]\n    SERVER AGGREGATE INTO ORDERED DISTINCT ROWS BY [TO_BIGINT(\"(A.INT_COL1 + 1)\")]"
                     + (localIndex ? "\nCLIENT MERGE SORT" : "");
             assertEquals(expectedPlan, QueryUtil.getExplainPlan(rs));
             rs = conn.createStatement().executeQuery(sql);
@@ -540,7 +556,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertTrue(rs.next());
             assertEquals(3, rs.getInt(1));
             assertFalse(rs.next());
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
@@ -567,28 +583,30 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
 
     protected void helpTestInClauseWithIndex(boolean mutable, boolean localIndex) throws Exception {
-        String dataTableName = mutable ? MUTABLE_INDEX_DATA_TABLE : INDEX_DATA_TABLE;
+        String dataTableName = generateUniqueName();
         String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
+
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            populateDataTable(conn, dataTableName);
-            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX IDX ON " + fullDataTableName
+            createDataTable(conn, fullDataTableName, mutable ? "" : "IMMUTABLE_ROWS=true");
+            populateDataTable(conn, fullDataTableName);
+            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + fullDataTableName
                     + " (int_col1+1)";
 
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
+            conn.createStatement().execute(ddl);
             String sql = "SELECT int_col1+1 FROM " + fullDataTableName + " where int_col1+1 IN (2)";
             ResultSet rs = conn.createStatement().executeQuery("EXPLAIN " + sql);
             assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER "
-                    + (localIndex ? "_LOCAL_IDX_" + fullDataTableName + " [-32768,2]\n    SERVER FILTER BY FIRST KEY ONLY\nCLIENT MERGE SORT"
-                            : "INDEX_TEST.IDX [2]\n    SERVER FILTER BY FIRST KEY ONLY"), QueryUtil.getExplainPlan(rs));
+                    + (localIndex ? fullDataTableName + " [1,2]\n    SERVER FILTER BY FIRST KEY ONLY\nCLIENT MERGE SORT"
+                            : "INDEX_TEST." + indexName + " [2]\n    SERVER FILTER BY FIRST KEY ONLY"), QueryUtil.getExplainPlan(rs));
             rs = conn.createStatement().executeQuery(sql);
             assertTrue(rs.next());
             assertEquals(2, rs.getInt(1));
             assertFalse(rs.next());
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
@@ -615,24 +633,26 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
 
     protected void helpTestSelectAliasAndOrderByWithIndex(boolean mutable, boolean localIndex) throws Exception {
-        String dataTableName = mutable ? MUTABLE_INDEX_DATA_TABLE : INDEX_DATA_TABLE;
+        String dataTableName = generateUniqueName();
         String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
+
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            populateDataTable(conn, dataTableName);
-            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX IDX ON " + fullDataTableName
+            createDataTable(conn, fullDataTableName, mutable ? "" : "IMMUTABLE_ROWS=true");
+            populateDataTable(conn, fullDataTableName);
+            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + fullDataTableName
                     + " (int_col1+1)";
 
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
+            conn.createStatement().execute(ddl);
             String sql = "SELECT int_col1+1 AS foo FROM " + fullDataTableName + " ORDER BY foo";
             ResultSet rs = conn.createStatement().executeQuery("EXPLAIN " + sql);
             assertEquals("CLIENT PARALLEL 1-WAY "
-                    + (localIndex ? "RANGE SCAN OVER _LOCAL_IDX_" + fullDataTableName
-                            + " [-32768]\n    SERVER FILTER BY FIRST KEY ONLY\nCLIENT MERGE SORT"
-                            : "FULL SCAN OVER INDEX_TEST.IDX\n    SERVER FILTER BY FIRST KEY ONLY"),
+                    + (localIndex ? "RANGE SCAN OVER " + fullDataTableName
+                            + " [1]\n    SERVER FILTER BY FIRST KEY ONLY\nCLIENT MERGE SORT"
+                            : "FULL SCAN OVER INDEX_TEST." + indexName + "\n    SERVER FILTER BY FIRST KEY ONLY"),
                     QueryUtil.getExplainPlan(rs));
             rs = conn.createStatement().executeQuery(sql);
             assertTrue(rs.next());
@@ -640,7 +660,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertTrue(rs.next());
             assertEquals(3, rs.getInt(1));
             assertFalse(rs.next());
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
@@ -667,21 +687,23 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
     
     protected void helpTestIndexWithCaseSensitiveCols(boolean mutable, boolean localIndex) throws Exception {
+        String dataTableName = generateUniqueName();
+        String indexName = generateUniqueName();
+
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
-            conn.createStatement().execute("CREATE TABLE cs (k VARCHAR NOT NULL PRIMARY KEY, \"cf1\".\"V1\" VARCHAR, \"CF2\".\"v2\" VARCHAR) "+ (mutable ? "IMMUTABLE_ROWS=true" : ""));
-            String query = "SELECT * FROM cs";
+            conn.createStatement().execute("CREATE TABLE " + dataTableName + " (k VARCHAR NOT NULL PRIMARY KEY, \"cf1\".\"V1\" VARCHAR, \"CF2\".\"v2\" VARCHAR) "+ (mutable ? "IMMUTABLE_ROWS=true" : ""));
+            String query = "SELECT * FROM " + dataTableName;
             ResultSet rs = conn.createStatement().executeQuery(query);
             assertFalse(rs.next());
-            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX ics ON cs (\"cf1\".\"V1\" || '_' || \"CF2\".\"v2\") INCLUDE (\"V1\",\"v2\")";
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
-            query = "SELECT * FROM ics";
+            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + dataTableName + " (\"cf1\".\"V1\" || '_' || \"CF2\".\"v2\") INCLUDE (\"V1\",\"v2\")";
+            conn.createStatement().execute(ddl);
+            query = "SELECT * FROM " + indexName;
             rs = conn.createStatement().executeQuery(query);
             assertFalse(rs.next());
 
-            stmt = conn.prepareStatement("UPSERT INTO cs VALUES(?,?,?)");
+            PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + " VALUES(?,?,?)");
             stmt.setString(1,"a");
             stmt.setString(2, "x");
             stmt.setString(3, "1");
@@ -692,13 +714,13 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             stmt.execute();
             conn.commit();
 
-            query = "SELECT (\"V1\" || '_' || \"v2\"), k, \"V1\", \"v2\"  FROM cs WHERE (\"V1\" || '_' || \"v2\") = 'x_1'";
+            query = "SELECT (\"V1\" || '_' || \"v2\"), k, \"V1\", \"v2\"  FROM " + dataTableName + " WHERE (\"V1\" || '_' || \"v2\") = 'x_1'";
             rs = conn.createStatement().executeQuery("EXPLAIN " + query);
             if(localIndex){
-                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_CS [-32768,'x_1']\n"
+                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + dataTableName + " [1,'x_1']\n"
                            + "CLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));
             } else {
-                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER ICS ['x_1']", QueryUtil.getExplainPlan(rs));
+                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + indexName + " ['x_1']", QueryUtil.getExplainPlan(rs));
             }
 
             rs = conn.createStatement().executeQuery(query);
@@ -714,13 +736,13 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertEquals("1",rs.getString("v2"));
             assertFalse(rs.next());
 
-            query = "SELECT \"V1\", \"V1\" as foo1, (\"V1\" || '_' || \"v2\") as foo, (\"V1\" || '_' || \"v2\") as \"Foo1\", (\"V1\" || '_' || \"v2\") FROM cs ORDER BY foo";
+            query = "SELECT \"V1\", \"V1\" as foo1, (\"V1\" || '_' || \"v2\") as foo, (\"V1\" || '_' || \"v2\") as \"Foo1\", (\"V1\" || '_' || \"v2\") FROM " + dataTableName + " ORDER BY foo";
             rs = conn.createStatement().executeQuery("EXPLAIN " + query);
             if(localIndex){
-                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_CS [-32768]\nCLIENT MERGE SORT",
+                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + dataTableName + " [1]\nCLIENT MERGE SORT",
                     QueryUtil.getExplainPlan(rs));
             } else {
-                assertEquals("CLIENT PARALLEL 1-WAY FULL SCAN OVER ICS", QueryUtil.getExplainPlan(rs));
+                assertEquals("CLIENT PARALLEL 1-WAY FULL SCAN OVER " + indexName, QueryUtil.getExplainPlan(rs));
             }
 
             rs = conn.createStatement().executeQuery(query);
@@ -747,7 +769,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertEquals("y_2",rs.getString(5));
             assertEquals("y_2",rs.getString("\"('cf1'.'V1' || '_' || 'CF2'.'v2')\""));
             assertFalse(rs.next());
-            conn.createStatement().execute("DROP INDEX ICS ON CS");
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + dataTableName);
         } finally {
             conn.close();
         }
@@ -774,25 +796,27 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
 
     protected void helpTestSelectColOnlyInDataTable(boolean mutable, boolean localIndex) throws Exception {
-        String dataTableName = mutable ? MUTABLE_INDEX_DATA_TABLE : INDEX_DATA_TABLE;
+        String dataTableName = generateUniqueName();
         String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
+
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             conn.setAutoCommit(false);
-            populateDataTable(conn, dataTableName);
-            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX IDX ON " + fullDataTableName
+            createDataTable(conn, fullDataTableName, mutable ? "" : "IMMUTABLE_ROWS=true");
+            populateDataTable(conn, fullDataTableName);
+            String ddl = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + fullDataTableName
                     + " (int_col1+1)";
 
             conn = DriverManager.getConnection(getUrl(), props);
             conn.setAutoCommit(false);
-            PreparedStatement stmt = conn.prepareStatement(ddl);
-            stmt.execute();
+            conn.createStatement().execute(ddl);
             String sql = "SELECT int_col1+1, int_col2 FROM " + fullDataTableName + " WHERE int_col1+1=2";
             ResultSet rs = conn.createStatement().executeQuery("EXPLAIN " + sql);
             assertEquals("CLIENT PARALLEL 1-WAY "
-                    + (localIndex ? "RANGE SCAN OVER _LOCAL_IDX_" + fullDataTableName
-                            + " [-32768,2]\n    SERVER FILTER BY FIRST KEY ONLY\nCLIENT MERGE SORT" : "FULL SCAN OVER "
+                    + (localIndex ? "RANGE SCAN OVER " + fullDataTableName
+                            + " [1,2]\n    SERVER FILTER BY FIRST KEY ONLY\nCLIENT MERGE SORT" : "FULL SCAN OVER "
                             + fullDataTableName + "\n    SERVER FILTER BY (A.INT_COL1 + 1) = 2"),
                     QueryUtil.getExplainPlan(rs));
             rs = conn.createStatement().executeQuery(sql);
@@ -800,7 +824,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertEquals(2, rs.getInt(1));
             assertEquals(1, rs.getInt(2));
             assertFalse(rs.next());
-            conn.createStatement().execute("DROP INDEX IDX ON " + fullDataTableName);
+            conn.createStatement().execute("DROP INDEX " + indexName + " ON " + fullDataTableName);
         } finally {
             conn.close();
         }
@@ -833,35 +857,41 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
+
+        String dataTableName = generateUniqueName();
+        String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
+
         try {
 	        conn.setAutoCommit(false);
 	
 	        // make sure that the tables are empty, but reachable
-	        conn.createStatement().execute(
-	          "CREATE TABLE t (k VARCHAR NOT NULL PRIMARY KEY, v1 VARCHAR, v2 VARCHAR)");
-	        query = "SELECT * FROM t" ;
+            conn.createStatement().execute(
+                "CREATE TABLE " + dataTableName
+                        + " (k VARCHAR NOT NULL PRIMARY KEY, v1 VARCHAR, v2 VARCHAR)"
+                        + (!mutable ? " IMMUTABLE_ROWS=true" : ""));
+	        query = "SELECT * FROM " + dataTableName ;
 	        rs = conn.createStatement().executeQuery(query);
 	        assertFalse(rs.next());
-	        String indexName = "it_" + (mutable ? "m" : "im") + "_" + (local ? "l" : "h");
-	        conn.createStatement().execute("CREATE " + ( local ? "LOCAL" : "") + " INDEX " + indexName + " ON t (v1 || '_' || v2)");
+	        conn.createStatement().execute("CREATE " + ( local ? "LOCAL" : "") + " INDEX " + indexName + " ON " + dataTableName + " (v1 || '_' || v2)");
 	
-	        query = "SELECT * FROM t";
+	        query = "SELECT * FROM " + dataTableName;
 	        rs = conn.createStatement().executeQuery(query);
 	        assertFalse(rs.next());
 	
 	        // load some data into the table
-	        stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?,?)");
+	        stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + " VALUES(?,?,?)");
 	        stmt.setString(1, "a");
 	        stmt.setString(2, "x");
 	        stmt.setString(3, "1");
 	        stmt.execute();
 	        conn.commit();
 	
-	        assertIndexExists(conn,true);
-	        conn.createStatement().execute("ALTER TABLE t DROP COLUMN v1");
-	        assertIndexExists(conn,false);
+	        assertIndexExists(conn, dataTableName, true);
+	        conn.createStatement().execute("ALTER TABLE " + dataTableName + " DROP COLUMN v1");
+	        assertIndexExists(conn, dataTableName, false);
 	
-	        query = "SELECT * FROM t";
+	        query = "SELECT * FROM " + dataTableName;
 	        rs = conn.createStatement().executeQuery(query);
 	        assertTrue(rs.next());
 	        assertEquals("a",rs.getString(1));
@@ -869,13 +899,13 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 	        assertFalse(rs.next());
 	
 	        // load some data into the table
-	        stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?)");
+	        stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + " VALUES(?,?)");
 	        stmt.setString(1, "a");
 	        stmt.setString(2, "2");
 	        stmt.execute();
 	        conn.commit();
 	
-	        query = "SELECT * FROM t";
+	        query = "SELECT * FROM " + dataTableName;
 	        rs = conn.createStatement().executeQuery(query);
 	        assertTrue(rs.next());
 	        assertEquals("a",rs.getString(1));
@@ -887,8 +917,8 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
         }
     }
     
-    private static void assertIndexExists(Connection conn, boolean exists) throws SQLException {
-        ResultSet rs = conn.getMetaData().getIndexInfo(null, null, "T", false, false);
+    private static void assertIndexExists(Connection conn, String tableName, boolean exists) throws SQLException {
+        ResultSet rs = conn.getMetaData().getIndexInfo(null, null, tableName, false, false);
         assertEquals(exists, rs.next());
     }
     
@@ -915,6 +945,9 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     public void helpTestDropCoveredColumn(boolean mutable, boolean local) throws Exception {
         ResultSet rs;
         PreparedStatement stmt;
+        String dataTableName = generateUniqueName();
+        String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -923,20 +956,19 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 	
 	        // make sure that the tables are empty, but reachable
 	        conn.createStatement().execute(
-	          "CREATE TABLE t"
+	          "CREATE TABLE " + dataTableName
 	              + " (k VARCHAR NOT NULL PRIMARY KEY, v1 VARCHAR, v2 VARCHAR, v3 VARCHAR)");
-	        String dataTableQuery = "SELECT * FROM t";
+	        String dataTableQuery = "SELECT * FROM " + dataTableName;
 	        rs = conn.createStatement().executeQuery(dataTableQuery);
 	        assertFalse(rs.next());
 	
-	        String indexName = "it_" + (mutable ? "m" : "im") + "_" + (local ? "l" : "h");
-	        conn.createStatement().execute("CREATE " + ( local ? "LOCAL" : "") + " INDEX " + indexName + " ON t (k || '_' || v1) include (v2, v3)");
+	        conn.createStatement().execute("CREATE " + ( local ? "LOCAL" : "") + " INDEX " + indexName + " ON " + dataTableName + " (k || '_' || v1) include (v2, v3)");
 	        String indexTableQuery = "SELECT * FROM " + indexName;
 	        rs = conn.createStatement().executeQuery(indexTableQuery);
 	        assertFalse(rs.next());
 	
 	        // load some data into the table
-	        stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?,?,?)");
+	        stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + " VALUES(?,?,?,?)");
 	        stmt.setString(1, "a");
 	        stmt.setString(2, "x");
 	        stmt.setString(3, "1");
@@ -944,9 +976,9 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 	        stmt.execute();
 	        conn.commit();
 	
-	        assertIndexExists(conn,true);
-	        conn.createStatement().execute("ALTER TABLE t DROP COLUMN v2");
-	        assertIndexExists(conn,true);
+	        assertIndexExists(conn, dataTableName, true);
+	        conn.createStatement().execute("ALTER TABLE " + dataTableName + " DROP COLUMN v2");
+	        assertIndexExists(conn, dataTableName, true);
 	
 	        // verify data table rows
 	        rs = conn.createStatement().executeQuery(dataTableQuery);
@@ -965,7 +997,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 	        assertFalse(rs.next());
 	
 	        // add another row
-	        stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?,?)");
+	        stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + " VALUES(?,?,?)");
 	        stmt.setString(1, "b");
 	        stmt.setString(2, "y");
 	        stmt.setString(3, "k");
@@ -1025,6 +1057,10 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
         ResultSet rs;
         PreparedStatement stmt;
 
+        String dataTableName = generateUniqueName();
+        String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName = generateUniqueName();
+
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
@@ -1032,29 +1068,28 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 	
 	        // make sure that the tables are empty, but reachable
 	        conn.createStatement().execute(
-	          "CREATE TABLE t"
+	          "CREATE TABLE "  + dataTableName
 	              + " (k VARCHAR NOT NULL PRIMARY KEY, v1 VARCHAR, v2 VARCHAR)");
-	        String dataTableQuery = "SELECT * FROM t";
+	        String dataTableQuery = "SELECT * FROM " + dataTableName;
 	        rs = conn.createStatement().executeQuery(dataTableQuery);
 	        assertFalse(rs.next());
 	
-	        String indexName = "IT_" + (mutable ? "M" : "IM") + "_" + (local ? "L" : "H");
-	        conn.createStatement().execute("CREATE " + ( local ? "LOCAL" : "") + " INDEX " + indexName + " ON t (v1 || '_' || v2)");
+	        conn.createStatement().execute("CREATE " + ( local ? "LOCAL" : "") + " INDEX " + indexName + " ON " + dataTableName + " (v1 || '_' || v2)");
 	        String indexTableQuery = "SELECT * FROM " + indexName;
 	        rs = conn.createStatement().executeQuery(indexTableQuery);
 	        assertFalse(rs.next());
 	
 	        // load some data into the table
-	        stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?,?)");
+	        stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + " VALUES(?,?,?)");
 	        stmt.setString(1, "a");
 	        stmt.setString(2, "x");
 	        stmt.setString(3, "1");
 	        stmt.execute();
 	        conn.commit();
 	
-	        assertIndexExists(conn,true);
-	        conn.createStatement().execute("ALTER TABLE t ADD v3 VARCHAR, k2 DECIMAL PRIMARY KEY");
-	        rs = conn.getMetaData().getPrimaryKeys("", "", "T");
+	        assertIndexExists(conn, dataTableName, true);
+	        conn.createStatement().execute("ALTER TABLE " + dataTableName + " ADD v3 VARCHAR, k2 DECIMAL PRIMARY KEY");
+	        rs = conn.getMetaData().getPrimaryKeys("", "", dataTableName);
 	        assertTrue(rs.next());
 	        assertEquals("K",rs.getString("COLUMN_NAME"));
 	        assertEquals(1, rs.getShort("KEY_SEQ"));
@@ -1092,7 +1127,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 	        assertFalse(rs.next());
 	
 	        // load some data into the table
-	        stmt = conn.prepareStatement("UPSERT INTO t(K,K2,V1,V2) VALUES(?,?,?,?)");
+	        stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + "(K,K2,V1,V2) VALUES(?,?,?,?)");
 	        stmt.setString(1, "b");
 	        stmt.setBigDecimal(2, BigDecimal.valueOf(2));
 	        stmt.setString(3, "y");
@@ -1145,28 +1180,33 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
        
     private void helpTestUpdatableViewIndex(boolean local) throws Exception {
     	Connection conn = DriverManager.getConnection(getUrl());
+        String dataTableName = generateUniqueName();
+        String fullDataTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + dataTableName;
+        String indexName1 = generateUniqueName();
+        String viewName = generateUniqueName();
+        String indexName2 = generateUniqueName();
     	try {
-	        String ddl = "CREATE TABLE t (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, k3 DECIMAL, s1 VARCHAR, s2 VARCHAR CONSTRAINT pk PRIMARY KEY (k1, k2, k3))";
+	        String ddl = "CREATE TABLE " + dataTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, k3 DECIMAL, s1 VARCHAR, s2 VARCHAR CONSTRAINT pk PRIMARY KEY (k1, k2, k3))";
 	        conn.createStatement().execute(ddl);
-	        ddl = "CREATE VIEW v AS SELECT * FROM t WHERE k1 = 1";
+	        ddl = "CREATE VIEW " + viewName + " AS SELECT * FROM " + dataTableName + " WHERE k1 = 1";
 	        conn.createStatement().execute(ddl);
-	        conn.createStatement().execute("UPSERT INTO v(k2,s1,s2,k3) VALUES(120,'foo0','bar0',50.0)");
-	        conn.createStatement().execute("UPSERT INTO v(k2,s1,s2,k3) VALUES(121,'foo1','bar1',51.0)");
+	        conn.createStatement().execute("UPSERT INTO " + viewName + "(k2,s1,s2,k3) VALUES(120,'foo0','bar0',50.0)");
+	        conn.createStatement().execute("UPSERT INTO " + viewName + "(k2,s1,s2,k3) VALUES(121,'foo1','bar1',51.0)");
 	        conn.commit();
 	        
 	        ResultSet rs;
-	        conn.createStatement().execute("CREATE " + (local ? "LOCAL" : "") + " INDEX i1 on v(k1+k2+k3) include (s1, s2)");
-	        conn.createStatement().execute("UPSERT INTO v(k2,s1,s2,k3) VALUES(120,'foo2','bar2',50.0)");
+	        conn.createStatement().execute("CREATE " + (local ? "LOCAL" : "") + " INDEX " + indexName1 + " on " + viewName + "(k1+k2+k3) include (s1, s2)");
+	        conn.createStatement().execute("UPSERT INTO " + viewName + "(k2,s1,s2,k3) VALUES(120,'foo2','bar2',50.0)");
 	        conn.commit();
 	
-	        String query = "SELECT k1, k2, k3, s1, s2 FROM v WHERE 	k1+k2+k3 = 173.0";
+	        String query = "SELECT k1, k2, k3, s1, s2 FROM " + viewName + " WHERE 	k1+k2+k3 = 173.0";
 	        rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 	        String queryPlan = QueryUtil.getExplainPlan(rs);
 	        if (local) {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_T [-32768,173]\n" + "CLIENT MERGE SORT",
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + dataTableName + " [1,173]\n" + "CLIENT MERGE SORT",
 	                    queryPlan);
 	        } else {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _IDX_T [" + Short.MIN_VALUE + ",173]", queryPlan);
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _IDX_" + dataTableName + " [" + Short.MIN_VALUE + ",173]", queryPlan);
 	        }
 	        rs = conn.createStatement().executeQuery(query);
 	        assertTrue(rs.next());
@@ -1177,16 +1217,16 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 	        assertEquals("bar1", rs.getString(5));
 	        assertFalse(rs.next());
 	
-	        conn.createStatement().execute("CREATE " + (local ? "LOCAL" : "") + " INDEX i2 on v(s1||'_'||s2)");
+	        conn.createStatement().execute("CREATE " + (local ? "LOCAL" : "") + " INDEX " + indexName2 + " on " + viewName + "(s1||'_'||s2)");
 	        
-	        query = "SELECT k1, k2, s1||'_'||s2 FROM v WHERE (s1||'_'||s2)='foo2_bar2'";
+	        query = "SELECT k1, k2, s1||'_'||s2 FROM " + viewName + " WHERE (s1||'_'||s2)='foo2_bar2'";
 	        rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 	        if (local) {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_T [" + (Short.MIN_VALUE + 1)
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + dataTableName + " [" + (2)
 	                    + ",'foo2_bar2']\n" + "    SERVER FILTER BY FIRST KEY ONLY\n" + "CLIENT MERGE SORT",
 	                    QueryUtil.getExplainPlan(rs));
 	        } else {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _IDX_T [" + (Short.MIN_VALUE + 1) + ",'foo2_bar2']\n"
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _IDX_" + dataTableName + " [" + (Short.MIN_VALUE + 1) + ",'foo2_bar2']\n"
 	                    + "    SERVER FILTER BY FIRST KEY ONLY", QueryUtil.getExplainPlan(rs));
 	        }
 	        rs = conn.createStatement().executeQuery(query);
@@ -1202,45 +1242,58 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     }
     
     @Test
-    public void testViewUsesTableIndex() throws Exception {
+    public void testViewUsesMutableTableIndex() throws Exception {
+        helpTestViewUsesTableIndex(false);
+    }
+    
+    @Test
+    public void testViewUsesImmutableTableIndex() throws Exception {
+        helpTestViewUsesTableIndex(true);
+    }
+    
+    private void helpTestViewUsesTableIndex(boolean immutable) throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
         try 
         {
+            String dataTableName = generateUniqueName();
+            String indexName1 = generateUniqueName();
+            String viewName = generateUniqueName();
+            String indexName2 = generateUniqueName();
         	ResultSet rs;
-	        String ddl = "CREATE TABLE t (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, s1 VARCHAR, s2 VARCHAR, s3 VARCHAR, s4 VARCHAR CONSTRAINT pk PRIMARY KEY (k1, k2))";
+	        String ddl = "CREATE TABLE " + dataTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, s1 VARCHAR, s2 VARCHAR, s3 VARCHAR, s4 VARCHAR CONSTRAINT pk PRIMARY KEY (k1, k2)) " + (immutable ? "IMMUTABLE_ROWS = true" : "");
 	        conn.createStatement().execute(ddl);
-	        conn.createStatement().execute("CREATE INDEX i1 ON t(k2, s2, s3, s1)");
-	        conn.createStatement().execute("CREATE INDEX i2 ON t(k2, s2||'_'||s3, s1, s4)");
+	        conn.createStatement().execute("CREATE INDEX " + indexName1 + " ON " + dataTableName + "(k2, s2, s3, s1)");
+	        conn.createStatement().execute("CREATE INDEX " + indexName2 + " ON " + dataTableName + "(k2, s2||'_'||s3, s1, s4)");
 	        
-	        ddl = "CREATE VIEW v AS SELECT * FROM t WHERE s1 = 'foo'";
+	        ddl = "CREATE VIEW " + viewName + " AS SELECT * FROM " + dataTableName + " WHERE s1 = 'foo'";
 	        conn.createStatement().execute(ddl);
-	        conn.createStatement().execute("UPSERT INTO t VALUES(1,1,'foo','abc','cab')");
-	        conn.createStatement().execute("UPSERT INTO t VALUES(2,2,'bar','xyz','zyx')");
+	        conn.createStatement().execute("UPSERT INTO " + dataTableName + " VALUES(1,1,'foo','abc','cab')");
+	        conn.createStatement().execute("UPSERT INTO " + dataTableName + " VALUES(2,2,'bar','xyz','zyx')");
 	        conn.commit();
 	        
-	        rs = conn.createStatement().executeQuery("SELECT count(*) FROM v");
+	        rs = conn.createStatement().executeQuery("SELECT count(*) FROM " + viewName);
 	        assertTrue(rs.next());
 	        assertEquals(1, rs.getLong(1));
 	        assertFalse(rs.next());
 	        
 	        //i2 should be used since it contains s3||'_'||s4 i
-	        String query = "SELECT s2||'_'||s3 FROM v WHERE k2=1 AND (s2||'_'||s3)='abc_cab'";
+	        String query = "SELECT s2||'_'||s3 FROM " + viewName + " WHERE k2=1 AND (s2||'_'||s3)='abc_cab'";
 	        rs = conn.createStatement(  ).executeQuery("EXPLAIN " + query);
 	        String queryPlan = QueryUtil.getExplainPlan(rs);
 	        assertEquals(
-	                "CLIENT PARALLEL 1-WAY RANGE SCAN OVER I2 [1,'abc_cab','foo']\n" + 
+	                "CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + indexName2 + " [1,'abc_cab','foo']\n" +
 	                "    SERVER FILTER BY FIRST KEY ONLY", queryPlan);
 	        rs = conn.createStatement().executeQuery(query);
 	        assertTrue(rs.next());
 	        assertEquals("abc_cab", rs.getString(1));
 	        assertFalse(rs.next());
 	        
-	        conn.createStatement().execute("ALTER VIEW v DROP COLUMN s4");
+	        conn.createStatement().execute("ALTER VIEW " + viewName + " DROP COLUMN s4");
 	        //i2 cannot be used since s4 has been dropped from the view, so i1 will be used 
 	        rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 	        queryPlan = QueryUtil.getExplainPlan(rs);
 	        assertEquals(
-	                "CLIENT PARALLEL 1-WAY RANGE SCAN OVER I1 [1]\n" + 
+	                "CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + indexName1 + " [1]\n" +
 	                "    SERVER FILTER BY FIRST KEY ONLY AND ((\"S2\" || '_' || \"S3\") = 'abc_cab' AND \"S1\" = 'foo')", queryPlan);
 	        rs = conn.createStatement().executeQuery(query);
 	        assertTrue(rs.next());
@@ -1254,17 +1307,19 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
     
 	@Test
 	public void testExpressionThrowsException() throws Exception {
-		Connection conn = DriverManager.getConnection(getUrl());
+        Connection conn = DriverManager.getConnection(getUrl());
+        String dataTableName = generateUniqueName();
+        String indexName = generateUniqueName();
 		try {
-			String ddl = "CREATE TABLE t (k1 INTEGER PRIMARY KEY, k2 INTEGER)";
+			String ddl = "CREATE TABLE " + dataTableName + " (k1 INTEGER PRIMARY KEY, k2 INTEGER)";
 			conn.createStatement().execute(ddl);
-			ddl = "CREATE INDEX i on t(k1/k2)";
+			ddl = "CREATE INDEX " + indexName + " on " + dataTableName + "(k1/k2)";
 			conn.createStatement().execute(ddl);
 			// upsert should succeed
-			conn.createStatement().execute("UPSERT INTO T VALUES(1,1)");
+			conn.createStatement().execute("UPSERT INTO " + dataTableName + " VALUES(1,1)");
 			conn.commit();
 			// divide by zero should fail
-			conn.createStatement().execute("UPSERT INTO T VALUES(1,0)");
+			conn.createStatement().execute("UPSERT INTO " + dataTableName + " VALUES(1,0)");
 			conn.commit();
 			fail();
 		} catch (CommitException e) {
@@ -1297,22 +1352,23 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 			boolean localIndex) throws Exception {
 		Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
 		Connection conn = DriverManager.getConnection(getUrl(), props);
+        String dataTableName = generateUniqueName();
+        String indexName = generateUniqueName();
 		try {
 			conn.createStatement().execute(
-					"CREATE TABLE t (k VARCHAR NOT NULL PRIMARY KEY, v VARCHAR) "
-							+ (mutable ? "IMMUTABLE_ROWS=true" : ""));
-			String query = "SELECT * FROM t";
+					"CREATE TABLE " + dataTableName + " (k VARCHAR NOT NULL PRIMARY KEY, v VARCHAR) "
+							+ (!mutable ? "IMMUTABLE_ROWS=true" : ""));
+			String query = "SELECT * FROM  " + dataTableName;
 			ResultSet rs = conn.createStatement().executeQuery(query);
 			assertFalse(rs.next());
 			String ddl = "CREATE " + (localIndex ? "LOCAL" : "")
-					+ " INDEX idx ON t (REGEXP_SUBSTR(v,'id:\\\\w+'))";
-			PreparedStatement stmt = conn.prepareStatement(ddl);
-			stmt.execute();
-			query = "SELECT * FROM idx";
+					+ " INDEX " + indexName + " ON " + dataTableName + " (REGEXP_SUBSTR(v,'id:\\\\w+'))";
+			conn.createStatement().execute(ddl);
+			query = "SELECT * FROM " + indexName;
 			rs = conn.createStatement().executeQuery(query);
 			assertFalse(rs.next());
 
-			stmt = conn.prepareStatement("UPSERT INTO t VALUES(?,?)");
+			PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + " VALUES(?,?)");
 			stmt.setString(1, "k1");
 			stmt.setString(2, "{id:id1}");
 			stmt.execute();
@@ -1321,16 +1377,16 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 			stmt.execute();
 			conn.commit();
 			
-			query = "SELECT k FROM t WHERE REGEXP_SUBSTR(v,'id:\\\\w+') = 'id:id1'";
+			query = "SELECT k FROM " + dataTableName + " WHERE REGEXP_SUBSTR(v,'id:\\\\w+') = 'id:id1'";
 			rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 			if (localIndex) {
 				assertEquals(
-						"CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_T [-32768,'id:id1']\n"
+						"CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + dataTableName + " [1,'id:id1']\n"
 								+ "    SERVER FILTER BY FIRST KEY ONLY\nCLIENT MERGE SORT",
 						QueryUtil.getExplainPlan(rs));
 			} else {
 				assertEquals(
-						"CLIENT PARALLEL 1-WAY RANGE SCAN OVER IDX ['id:id1']\n"
+						"CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + indexName + " ['id:id1']\n"
 								+ "    SERVER FILTER BY FIRST KEY ONLY",
 						QueryUtil.getExplainPlan(rs));
 			}
@@ -1368,27 +1424,26 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 			boolean localIndex) throws Exception {
 		Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
 		Connection conn = DriverManager.getConnection(getUrl(), props);
-		String nameSuffix = "t" + (mutable ? "_mutable" : "_immutable") + (localIndex ? "_local" : "_global");
-		String tableName = "t" + nameSuffix;
-		String indexName = "idx" + nameSuffix;
-		try {
+        String dataTableName = generateUniqueName();
+        String indexName = generateUniqueName();
+        try {
 			conn.createStatement().execute(
-				"CREATE TABLE " + tableName + " ("
+				"CREATE TABLE " + dataTableName + " ("
 							+ "pk1 VARCHAR not null, "
 							+ "pk2 VARCHAR not null, "
 							+ "CONSTRAINT PK PRIMARY KEY (pk1, pk2))"
 							+ (!mutable ? "IMMUTABLE_ROWS=true" : ""));
-			String query = "SELECT * FROM " + tableName;
+			String query = "SELECT * FROM " + dataTableName;
 			ResultSet rs = conn.createStatement().executeQuery(query);
 			assertFalse(rs.next());
 			conn.createStatement().execute(
 				"CREATE " + (localIndex ? "LOCAL" : "")
-					+ " INDEX " + indexName + " ON " + tableName + " (pk2, pk1)");
+					+ " INDEX " + indexName + " ON " + dataTableName + " (pk2, pk1)");
 			query = "SELECT * FROM " + indexName;
 			rs = conn.createStatement().executeQuery(query);
 			assertFalse(rs.next());
 
-			PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + tableName + " VALUES(?,?)");
+			PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + dataTableName + " VALUES(?,?)");
 			stmt.setString(1, "k11");
 			stmt.setString(2, "k21");
 			stmt.execute();
@@ -1401,7 +1456,7 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
             assertEquals("k11", rs.getString(2));
             assertFalse(rs.next());
             
-			query = "SELECT * FROM " + tableName + " WHERE pk2='k21'";
+			query = "SELECT * FROM " + dataTableName + " WHERE pk2='k21'";
 			rs = conn.createStatement().executeQuery(query);
 			assertTrue(rs.next());
 			assertEquals("k11", rs.getString(1));
@@ -1410,6 +1465,88 @@ public class IndexExpressionIT extends BaseHBaseManagedTimeIT {
 		} finally {
 			conn.close();
 		}
+	}
+	
+	@Test
+    public void testImmutableTableGlobalIndexExpressionWithJoin() throws Exception {
+        helpTestIndexExpressionWithJoin(false, false);
+    }
+	
+	@Test
+    public void testImmutableTableLocalIndexExpressionWithJoin() throws Exception {
+        helpTestIndexExpressionWithJoin(false, true);
+    }
+	
+	@Test
+    public void testMutableTableGlobalIndexExpressionWithJoin() throws Exception {
+        helpTestIndexExpressionWithJoin(true, false);
+    }
+	
+	@Test
+    public void testMutableTableLocalIndexExpressionWithJoin() throws Exception {
+	    helpTestIndexExpressionWithJoin(true, true);
+    }
+
+    public void helpTestIndexExpressionWithJoin(boolean mutable,
+            boolean localIndex) throws Exception {
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        String nameSuffix = "T" + (mutable ? "MUTABLE" : "_IMMUTABLE") + (localIndex ? "_LOCAL" : "_GLOBAL");
+        String tableName = "T" + nameSuffix;
+        String indexName = "IDX" + nameSuffix;
+        try {
+            conn.createStatement().execute(
+                        "CREATE TABLE "
+                                + tableName
+                                + "( c_customer_sk varchar primary key, c_first_name varchar, c_last_name varchar )"
+                                + (!mutable ? "IMMUTABLE_ROWS=true" : ""));
+            String query = "SELECT * FROM " + tableName;
+            ResultSet rs = conn.createStatement().executeQuery(query);
+            assertFalse(rs.next());
+            
+            conn.createStatement().execute(
+                "CREATE " + (localIndex ? "LOCAL" : "")
+                + " INDEX " + indexName + " ON " + tableName + " (c_customer_sk || c_first_name asc)");
+            query = "SELECT * FROM " + indexName;
+            rs = conn.createStatement().executeQuery(query);
+            assertFalse(rs.next());
+            
+            PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + tableName + " VALUES(?,?,?)");
+            stmt.setString(1, "1");
+            stmt.setString(2, "David");
+            stmt.setString(3, "Smith");
+            stmt.execute();
+            conn.commit();
+            
+            query = "select c.c_customer_sk from  " + tableName + " c "
+                    + "left outer join " + tableName + " c2 on c.c_customer_sk = c2.c_customer_sk "
+                    + "where c.c_customer_sk || c.c_first_name = '1David'";
+            rs = conn.createStatement().executeQuery("EXPLAIN "+query);
+            String explainPlan = QueryUtil.getExplainPlan(rs);
+            if (localIndex) {
+            	assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + tableName + " [1,'1David']\n" + 
+                        "    SERVER FILTER BY FIRST KEY ONLY\n" + 
+                        "CLIENT MERGE SORT\n" +
+                        "    PARALLEL LEFT-JOIN TABLE 0 (SKIP MERGE)\n" +
+                        "        CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + tableName + " [1]\n" + 
+                        "            SERVER FILTER BY FIRST KEY ONLY\n" + 
+                        "        CLIENT MERGE SORT", explainPlan);
+            }
+            else {
+            	assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + indexName + " ['1David']\n" + 
+                        "    SERVER FILTER BY FIRST KEY ONLY\n" + 
+                        "    PARALLEL LEFT-JOIN TABLE 0 (SKIP MERGE)\n" +
+                        "        CLIENT PARALLEL 1-WAY FULL SCAN OVER " + indexName + "\n" + 
+                        "            SERVER FILTER BY FIRST KEY ONLY", explainPlan);
+            }
+            
+            rs = conn.createStatement().executeQuery(query);
+            assertTrue(rs.next());
+            assertEquals("1", rs.getString(1));
+            assertFalse(rs.next());
+        } finally {
+            conn.close();
+        }
 	}
 
 }

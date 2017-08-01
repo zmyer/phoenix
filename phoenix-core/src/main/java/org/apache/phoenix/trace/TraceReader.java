@@ -14,7 +14,8 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- */package org.apache.phoenix.trace;
+ */
+package org.apache.phoenix.trace;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -29,18 +30,19 @@ import java.util.TreeSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.htrace.Span;
+import org.apache.htrace.Trace;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.metrics.MetricInfo;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.util.LogUtil;
-import org.apache.htrace.Span;
 
 import com.google.common.base.Joiner;
 import com.google.common.primitives.Longs;
 
 /**
- * Read the traces written to phoenix tables by the {@link PhoenixMetricsSink}.
+ * Read the traces written to phoenix tables by the {@link TraceWriter}.
  */
 public class TraceReader {
 
@@ -54,23 +56,19 @@ public class TraceReader {
                 comma.join(MetricInfo.TRACE.columnName, MetricInfo.PARENT.columnName,
                     MetricInfo.SPAN.columnName, MetricInfo.DESCRIPTION.columnName,
                     MetricInfo.START.columnName, MetricInfo.END.columnName,
-                    MetricInfo.HOSTNAME.columnName, PhoenixMetricsSink.TAG_COUNT,
-                        PhoenixMetricsSink.ANNOTATION_COUNT);
+                    MetricInfo.HOSTNAME.columnName, TraceWriter.TAG_COUNT,
+                    TraceWriter.ANNOTATION_COUNT);
     }
 
     private Connection conn;
     private String table;
     private int pageSize;
 
-    public TraceReader(Connection conn, String statsTableName) throws SQLException {
+    public TraceReader(Connection conn, String tracingTableName) throws SQLException {
         this.conn = conn;
-        this.table = statsTableName;
+        this.table = tracingTableName;
         String ps = conn.getClientInfo(QueryServices.TRACING_PAGE_SIZE_ATTRIB);
         this.pageSize = ps == null ? QueryServicesOptions.DEFAULT_TRACING_PAGE_SIZE : Integer.parseInt(ps);
-    }
-
-    public TraceReader(Connection conn) throws SQLException {
-        this(conn, QueryServicesOptions.DEFAULT_TRACING_STATS_TABLE_NAME);
     }
 
     /**
@@ -87,7 +85,7 @@ public class TraceReader {
         // trace
         // goes together), and then by start time (so parent spans always appear before child spans)
         String query =
-                "SELECT " + knownColumns + " FROM " + QueryServicesOptions.DEFAULT_TRACING_STATS_TABLE_NAME
+                "SELECT " + knownColumns + " FROM " + table
                         + " ORDER BY " + MetricInfo.TRACE.columnName + " DESC, "
                         + MetricInfo.START.columnName + " ASC" + " LIMIT " + pageSize;
         int resultCount = 0;
@@ -181,13 +179,13 @@ public class TraceReader {
     private Collection<? extends String> getTags(long traceid, long parent, long span, int count)
             throws SQLException {
         return getDynamicCountColumns(traceid, parent, span, count,
-                PhoenixMetricsSink.TAG_FAMILY, MetricInfo.TAG.columnName);
+                TraceWriter.TAG_FAMILY, MetricInfo.TAG.columnName);
     }
 
     private Collection<? extends String> getAnnotations(long traceid, long parent, long span,
             int count) throws SQLException {
         return getDynamicCountColumns(traceid, parent, span, count,
-                PhoenixMetricsSink.ANNOTATION_FAMILY, MetricInfo.ANNOTATION.columnName);
+            TraceWriter.ANNOTATION_FAMILY, MetricInfo.ANNOTATION.columnName);
     }
 
     private Collection<? extends String> getDynamicCountColumns(long traceid, long parent,
@@ -199,7 +197,7 @@ public class TraceReader {
         // build the column strings, family.column<index>
         String[] parts = new String[count];
         for (int i = 0; i < count; i++) {
-            parts[i] = PhoenixMetricsSink.getDynamicColumnName(family, columnName, i);
+            parts[i] = TraceWriter.getDynamicColumnName(family, columnName, i);
         }
         // join the columns together
         String columns = comma.join(parts);

@@ -27,23 +27,14 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Map;
 import java.util.Properties;
 
-import org.apache.phoenix.jdbc.PhoenixConnection;
-import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.QueryUtil;
-import org.apache.phoenix.util.ReadOnlyProps;
-import org.junit.After;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.google.common.collect.Maps;
-
-public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
+public class HashJoinMoreIT extends ParallelStatsDisabledIT {
     private final String[] plans = new String[] {
             /*
              * testJoinWithKeyRangeOptimization()
@@ -51,10 +42,10 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
              *     FROM TEMP_TABLE_COMPOSITE_PK lhs 
              *     JOIN TEMP_TABLE_COMPOSITE_PK rhs ON lhs.col1 = rhs.col2
              */
-            "CLIENT PARALLEL 4-WAY FULL SCAN OVER TEMP_TABLE_COMPOSITE_PK\n" +
+            "CLIENT PARALLEL 4-WAY FULL SCAN OVER %s\n" +
             "CLIENT MERGE SORT\n" +
             "    PARALLEL INNER-JOIN TABLE 0\n" +
-            "        CLIENT PARALLEL 4-WAY FULL SCAN OVER TEMP_TABLE_COMPOSITE_PK\n" +
+            "        CLIENT PARALLEL 4-WAY FULL SCAN OVER %s\n" +
             "        CLIENT MERGE SORT",
             /*
              * testJoinWithKeyRangeOptimization()
@@ -62,10 +53,10 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
              *     FROM TEMP_TABLE_COMPOSITE_PK lhs 
              *     JOIN TEMP_TABLE_COMPOSITE_PK rhs ON lhs.col0 = rhs.col2
              */
-            "CLIENT PARALLEL 4-WAY FULL SCAN OVER TEMP_TABLE_COMPOSITE_PK\n" +
+            "CLIENT PARALLEL 4-WAY FULL SCAN OVER %s\n" +
             "CLIENT MERGE SORT\n" +
             "    PARALLEL INNER-JOIN TABLE 0\n" +
-            "        CLIENT PARALLEL 4-WAY FULL SCAN OVER TEMP_TABLE_COMPOSITE_PK\n" +
+            "        CLIENT PARALLEL 4-WAY FULL SCAN OVER %s\n" +
             "        CLIENT MERGE SORT\n" +
             "    DYNAMIC SERVER FILTER BY LHS.COL0 IN (RHS.COL2)",
             /*
@@ -74,10 +65,10 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
              *     FROM TEMP_TABLE_COMPOSITE_PK lhs 
              *     JOIN TEMP_TABLE_COMPOSITE_PK rhs ON lhs.col0 = rhs.col1 AND lhs.col1 = rhs.col2
              */
-            "CLIENT PARALLEL 4-WAY FULL SCAN OVER TEMP_TABLE_COMPOSITE_PK\n" +
+            "CLIENT PARALLEL 4-WAY FULL SCAN OVER %s\n" +
             "CLIENT MERGE SORT\n" +
             "    PARALLEL INNER-JOIN TABLE 0\n" +
-            "        CLIENT PARALLEL 4-WAY FULL SCAN OVER TEMP_TABLE_COMPOSITE_PK\n" +
+            "        CLIENT PARALLEL 4-WAY FULL SCAN OVER %s\n" +
             "        CLIENT MERGE SORT\n" +
             "    DYNAMIC SERVER FILTER BY (LHS.COL0, LHS.COL1) IN ((RHS.COL1, RHS.COL2))",
             /*
@@ -86,39 +77,18 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
              *     FROM TEMP_TABLE_COMPOSITE_PK lhs 
              *     JOIN TEMP_TABLE_COMPOSITE_PK rhs ON lhs.col0 = rhs.col1 AND lhs.col2 = rhs.col3 - 1 AND lhs.col1 = rhs.col2
              */
-            "CLIENT PARALLEL 4-WAY FULL SCAN OVER TEMP_TABLE_COMPOSITE_PK\n" +
+            "CLIENT PARALLEL 4-WAY FULL SCAN OVER %s\n" +
             "CLIENT MERGE SORT\n" +
             "    PARALLEL INNER-JOIN TABLE 0\n" +
-            "        CLIENT PARALLEL 4-WAY FULL SCAN OVER TEMP_TABLE_COMPOSITE_PK\n" +
+            "        CLIENT PARALLEL 4-WAY FULL SCAN OVER %s\n" +
             "        CLIENT MERGE SORT\n" +
             "    DYNAMIC SERVER FILTER BY (LHS.COL0, LHS.COL1, LHS.COL2) IN ((RHS.COL1, RHS.COL2, TO_INTEGER((RHS.COL3 - 1))))",            
     };
     
-    @BeforeClass
-    @Shadower(classBeingShadowed = BaseHBaseManagedTimeIT.class)
-    public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(3);
-        // Forces server cache to be used
-        props.put(QueryServices.INDEX_MUTATE_BATCH_SIZE_THRESHOLD_ATTRIB, Integer.toString(2));
-        // Must update config before starting server
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
-    }
-    
-    @After
-    public void assertNoUnfreedMemory() throws SQLException {
-        Connection conn = DriverManager.getConnection(getUrl());
-        try {
-            long unfreedBytes = conn.unwrap(PhoenixConnection.class).getQueryServices().clearCache();
-            assertEquals(0,unfreedBytes);
-        } finally {
-            conn.close();
-        }
-    }
-    
     @Test
     public void testJoinOverSaltedTables() throws Exception {
-        String tempTableNoSalting = "TEMP_TABLE_NO_SALTING";
-        String tempTableWithSalting = "TEMP_TABLE_WITH_SALTING";
+        String tempTableNoSalting = generateUniqueName();
+        String tempTableWithSalting = generateUniqueName();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
@@ -255,8 +225,8 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
 
     @Test
     public void testJoinOnDynamicColumns() throws Exception {
-        String tableA = "tableA";
-        String tableB = "tableB";
+        String tableA = generateUniqueName();
+        String tableB = generateUniqueName();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = null;
         PreparedStatement stmt = null;
@@ -266,15 +236,10 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
                     + "        colA2 VARCHAR " + "CONSTRAINT PK PRIMARY KEY" + "(pkA)" + ")";
 
             String ddlB = "CREATE TABLE " + tableB + "   (pkB INTEGER NOT NULL PRIMARY KEY, " + "    colB INTEGER)";
-            stmt = conn.prepareStatement(ddlA);
-            stmt.execute();
-            stmt.close();
+            conn.createStatement().execute(ddlA);
+            conn.createStatement().execute(ddlB);
 
-            stmt = conn.prepareStatement(ddlB);
-            stmt.execute();
-            stmt.close();
-
-            String upsertA = "UPSERT INTO TABLEA (pkA, colA1, colA2) VALUES(?, ?, ?)";
+            String upsertA = "UPSERT INTO " + tableA + " (pkA, colA1, colA2) VALUES(?, ?, ?)";
             stmt = conn.prepareStatement(upsertA);
             int i = 0;
             for (i = 0; i < 5; i++) {
@@ -286,19 +251,20 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
             conn.commit();
             stmt.close();
 
+            String sequenceB = generateUniqueName();
             // upsert select dynamic columns in tableB
-            conn.createStatement().execute("CREATE SEQUENCE SEQB");
-            String upsertBSelectA = "UPSERT INTO TABLEB (pkB, pkA INTEGER)"
-                    + "SELECT NEXT VALUE FOR SEQB, pkA FROM TABLEA";
+            conn.createStatement().execute("CREATE SEQUENCE " + sequenceB );
+            String upsertBSelectA = "UPSERT INTO " + tableB + " (pkB, pkA INTEGER)"
+                    + "SELECT NEXT VALUE FOR " + sequenceB + ", pkA FROM " + tableA ;
             stmt = conn.prepareStatement(upsertBSelectA);
             stmt.executeUpdate();
             stmt.close();
             conn.commit();
-            conn.createStatement().execute("DROP SEQUENCE SEQB");
+            conn.createStatement().execute("DROP SEQUENCE " + sequenceB );
 
             // perform a join between tableB and tableA by joining on the dynamic column that we upserted in
             // tableB. This join should return all the rows from table A.
-            String joinSql = "SELECT A.pkA, A.COLA1, A.colA2 FROM TABLEB B(pkA INTEGER) JOIN TABLEA A ON a.pkA = b.pkA";
+            String joinSql = "SELECT A.pkA, A.COLA1, A.colA2 FROM " + tableB + " B(pkA INTEGER) JOIN " + tableA + " A ON a.pkA = b.pkA";
             stmt = conn.prepareStatement(joinSql);
             ResultSet rs = stmt.executeQuery();
             i = 0;
@@ -324,7 +290,7 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testJoinWithKeyRangeOptimization() throws Exception {
-        String tempTableWithCompositePK = "TEMP_TABLE_COMPOSITE_PK";
+        String tempTableWithCompositePK = generateUniqueName();
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
@@ -375,7 +341,7 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
             
             rs = conn.createStatement().executeQuery("EXPLAIN " + query);
-            assertEquals(plans[0], QueryUtil.getExplainPlan(rs));
+            assertEquals(String.format(plans[0],tempTableWithCompositePK,tempTableWithCompositePK), QueryUtil.getExplainPlan(rs));
             
             // Two parts of PK but only one leading part
             query = "SELECT lhs.col0, lhs.col1, lhs.col2, lhs.col3, rhs.col0, rhs.col1, rhs.col2, rhs.col3 FROM " 
@@ -396,7 +362,7 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
             
             rs = conn.createStatement().executeQuery("EXPLAIN " + query);
-            assertEquals(plans[1], QueryUtil.getExplainPlan(rs));
+            assertEquals(String.format(plans[1],tempTableWithCompositePK,tempTableWithCompositePK), QueryUtil.getExplainPlan(rs));
             
             // Two leading parts of PK
             query = "SELECT lhs.col0, lhs.col1, lhs.col2, lhs.col3, rhs.col0, rhs.col1, rhs.col2, rhs.col3 FROM " 
@@ -426,7 +392,7 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
             
             rs = conn.createStatement().executeQuery("EXPLAIN " + query);
-            assertEquals(plans[2], QueryUtil.getExplainPlan(rs));
+            assertEquals(String.format(plans[2],tempTableWithCompositePK,tempTableWithCompositePK), QueryUtil.getExplainPlan(rs));
             
             // All parts of PK
             query = "SELECT lhs.col0, lhs.col1, lhs.col2, lhs.col3, rhs.col0, rhs.col1, rhs.col2, rhs.col3 FROM " 
@@ -456,7 +422,7 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
             
             rs = conn.createStatement().executeQuery("EXPLAIN " + query);
-            assertEquals(plans[3], QueryUtil.getExplainPlan(rs));
+            assertEquals(String.format(plans[3],tempTableWithCompositePK,tempTableWithCompositePK), QueryUtil.getExplainPlan(rs));
         } finally {
             conn.close();
         }
@@ -527,15 +493,15 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
                             " TENANTID UNSIGNED_INT NOT NULL" +
                             ",ID UNSIGNED_INT NOT NULL" +
                             ",FOO UNSIGNED_INT NOT NULL" +
-                            ",TIMESTAMP UNSIGNED_LONG NOT NULL" +
+                            ",\"TIMESTAMP\"  UNSIGNED_LONG NOT NULL" +
                             ",CODES INTEGER ARRAY[] NOT NULL" +
                             ",V UNSIGNED_LONG" +
-                            " CONSTRAINT pk PRIMARY KEY (TENANTID, ID, FOO, TIMESTAMP, CODES))" +
+                            " CONSTRAINT pk PRIMARY KEY (TENANTID, ID, FOO, \"TIMESTAMP\" , CODES))" +
                             " DEFAULT_COLUMN_FAMILY ='E'," +
                             " MULTI_TENANT=true");
             PreparedStatement upsertStmt = conn.prepareStatement(
                     "upsert into INVENTORY "
-                    + "(tenantid, id, foo, timestamp, codes) "
+                    + "(tenantid, id, foo, \"TIMESTAMP\" , codes) "
                     + "values (?, ?, ?, ?, ?)");
             upsertStmt.setInt(1, 15);
             upsertStmt.setInt(2, 5);
@@ -685,6 +651,256 @@ public class HashJoinMoreIT extends BaseHBaseManagedTimeIT {
             assertEquals("2", rs.getString(8));
             assertEquals("CC2", rs.getString(9));
             
+            assertFalse(rs.next());
+        } finally {
+            conn.close();
+        }
+    }
+
+    @Test
+    public void testBug2894() throws Exception {
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        conn.setAutoCommit(true);
+        try {
+            conn.createStatement().execute(
+                    "CREATE TABLE IF NOT EXISTS EVENT_COUNT (\n" +
+                    "        BUCKET VARCHAR,\n" +
+                    "        TIMESTAMP_DATE TIMESTAMP,\n" +
+                    "        \"TIMESTAMP\" UNSIGNED_LONG NOT NULL,\n" +
+                    "        LOCATION VARCHAR,\n" +
+                    "        A VARCHAR,\n" +
+                    "        B VARCHAR,\n" +
+                    "        C VARCHAR,\n" +
+                    "        D UNSIGNED_LONG,\n" +
+                    "        E FLOAT\n" +
+                    "    CONSTRAINT pk PRIMARY KEY (BUCKET, \"TIMESTAMP\" DESC, LOCATION, A, B, C)\n" +
+                    ") SALT_BUCKETS=2, COMPRESSION='GZ', TTL=31622400");
+            PreparedStatement stmt = conn.prepareStatement("UPSERT INTO EVENT_COUNT(BUCKET, \"TIMESTAMP\", LOCATION, A, B, C) VALUES(?,?,?,?,?,?)");
+            stmt.setString(1, "5SEC");
+            stmt.setString(3, "Tr/Bal");
+            stmt.setString(4, "A1");
+            stmt.setString(5, "B1");
+            stmt.setString(6, "C1");
+            stmt.setLong(2, 1462993520000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993515000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993510000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993505000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993500000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993495000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993490000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993485000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993480000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993475000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993470000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993465000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993460000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993455000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993450000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993445000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993440000000000L);
+            stmt.execute();
+            stmt.setLong(2, 1462993430000000000L);
+            stmt.execute();
+
+            // We'll test the original version of the user table as well as a slightly modified
+            // version, in order to verify that hash join works for columns both having DESC
+            // sort order as well as one having ASC order and the other having DESC order.
+            String[] t = new String[] {"EVENT_LATENCY", "EVENT_LATENCY_2"};
+            for (int i = 0; i < 2; i++) {
+                conn.createStatement().execute(
+                        "CREATE TABLE IF NOT EXISTS " + t[i] + " (\n" +
+                                "        BUCKET VARCHAR,\n" +
+                                "        TIMESTAMP_DATE TIMESTAMP,\n" +
+                                "        \"TIMESTAMP\" UNSIGNED_LONG NOT NULL,\n" +
+                                "        SRC_LOCATION VARCHAR,\n" +
+                                "        DST_LOCATION VARCHAR,\n" +
+                                "        B VARCHAR,\n" +
+                                "        C VARCHAR,\n" +
+                                "        F UNSIGNED_LONG,\n" +
+                                "        G UNSIGNED_LONG,\n" +
+                                "        H UNSIGNED_LONG,\n" +
+                                "        I UNSIGNED_LONG\n" +
+                                "    CONSTRAINT pk PRIMARY KEY (BUCKET, \"TIMESTAMP\"" + (i == 0 ? " DESC" : "") + ", SRC_LOCATION, DST_LOCATION, B, C)\n" +
+                        ") SALT_BUCKETS=2, COMPRESSION='GZ', TTL=31622400");
+                stmt = conn.prepareStatement("UPSERT INTO " + t[i] + "(BUCKET, \"TIMESTAMP\", SRC_LOCATION, DST_LOCATION, B, C) VALUES(?,?,?,?,?,?)");
+                stmt.setString(1, "5SEC");
+                stmt.setString(3, "Tr/Bal");
+                stmt.setString(4, "Tr/Bal");
+                stmt.setString(5, "B1");
+                stmt.setString(6, "C1");
+                stmt.setLong(2, 1462993520000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993515000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993510000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993505000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993490000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993485000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993480000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993475000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993470000000000L);
+                stmt.execute();
+                stmt.setLong(2, 1462993430000000000L);
+                stmt.execute();
+                
+                String q =
+                        "SELECT C.BUCKET, C.\"TIMESTAMP\" FROM (\n" +
+                        "     SELECT E.BUCKET as BUCKET, L.BUCKET as LBUCKET, E.\"TIMESTAMP\" as TIMESTAMP, L.\"TIMESTAMP\" as LTIMESTAMP FROM\n" +
+                        "        (SELECT BUCKET, \"TIMESTAMP\"  FROM EVENT_COUNT\n" +
+                        "             WHERE BUCKET = '5SEC' AND LOCATION = 'Tr/Bal'\n" +
+                        "                 AND \"TIMESTAMP\"  <= 1462993520000000000 AND \"TIMESTAMP\"  > 1462993420000000000\n" +
+                        "        ) E\n" +
+                        "        JOIN\n" +
+                        "         (SELECT BUCKET, \"TIMESTAMP\"  FROM "+ t[i] +"\n" +
+                        "             WHERE BUCKET = '5SEC' AND SRC_LOCATION = 'Tr/Bal' AND SRC_LOCATION = DST_LOCATION\n" +
+                        "                 AND \"TIMESTAMP\"  <= 1462993520000000000 AND \"TIMESTAMP\"  > 1462993420000000000\n" +
+                        "         ) L\n" +
+                        "     ON L.BUCKET = E.BUCKET AND L.\"TIMESTAMP\"  = E.\"TIMESTAMP\"\n" +
+                        " ) C\n" +
+                        " GROUP BY C.BUCKET, C.\"TIMESTAMP\"";
+                    
+                String p = i == 0 ?
+                        "CLIENT PARALLEL 2-WAY SKIP SCAN ON 2 RANGES OVER EVENT_COUNT [0,'5SEC',~1462993520000000000,'Tr/Bal'] - [1,'5SEC',~1462993420000000000,'Tr/Bal']\n" +
+                        "    SERVER FILTER BY FIRST KEY ONLY\n" +
+                        "    SERVER AGGREGATE INTO DISTINCT ROWS BY [E.BUCKET, \"E.TIMESTAMP\"]\n" +
+                        "CLIENT MERGE SORT\n" +
+                        "    PARALLEL INNER-JOIN TABLE 0 (SKIP MERGE)\n" +
+                        "        CLIENT PARALLEL 2-WAY SKIP SCAN ON 2 RANGES OVER " + t[i] + " [0,'5SEC',~1462993520000000000,'Tr/Bal'] - [1,'5SEC',~1462993420000000000,'Tr/Bal']\n" +
+                        "            SERVER FILTER BY FIRST KEY ONLY AND SRC_LOCATION = DST_LOCATION\n" +
+                        "        CLIENT MERGE SORT"
+                        :
+                        "CLIENT PARALLEL 2-WAY SKIP SCAN ON 2 RANGES OVER EVENT_COUNT [0,'5SEC',~1462993520000000000,'Tr/Bal'] - [1,'5SEC',~1462993420000000000,'Tr/Bal']\n" +
+                        "    SERVER FILTER BY FIRST KEY ONLY\n" +
+                        "    SERVER AGGREGATE INTO DISTINCT ROWS BY [E.BUCKET, \"E.TIMESTAMP\"]\n" +
+                        "CLIENT MERGE SORT\n" +
+                        "    PARALLEL INNER-JOIN TABLE 0 (SKIP MERGE)\n" +
+                        "        CLIENT PARALLEL 2-WAY SKIP SCAN ON 2 RANGES OVER " + t[i] + " [0,'5SEC',1462993420000000001,'Tr/Bal'] - [1,'5SEC',1462993520000000000,'Tr/Bal']\n" +
+                        "            SERVER FILTER BY FIRST KEY ONLY AND SRC_LOCATION = DST_LOCATION\n" +
+                        "        CLIENT MERGE SORT";
+                
+                ResultSet rs = conn.createStatement().executeQuery("explain " + q);
+                assertEquals(p, QueryUtil.getExplainPlan(rs));
+                
+                rs = conn.createStatement().executeQuery(q);
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993520000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993515000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993510000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993505000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993490000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993485000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993480000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993475000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993470000000000L, rs.getLong(2));
+                assertTrue(rs.next());
+                assertEquals("5SEC", rs.getString(1));
+                assertEquals(1462993430000000000L, rs.getLong(2));
+                assertFalse(rs.next());
+            }
+        } finally {
+            conn.close();
+        }
+    }
+    
+    @Test
+    public void testBug2961() throws Exception {
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        conn.setAutoCommit(true);
+        try {
+            conn.createStatement().execute("CREATE TABLE test2961 (\n" + 
+                    "ACCOUNT_ID VARCHAR NOT NULL,\n" + 
+                    "BUCKET_ID VARCHAR NOT NULL,\n" + 
+                    "OBJECT_ID VARCHAR NOT NULL,\n" + 
+                    "OBJECT_VERSION VARCHAR NOT NULL,\n" + 
+                    "LOC VARCHAR,\n" + 
+                    "CONSTRAINT PK PRIMARY KEY (ACCOUNT_ID, BUCKET_ID, OBJECT_ID, OBJECT_VERSION DESC))");
+            conn.createStatement().execute("UPSERT INTO test2961  (ACCOUNT_ID, BUCKET_ID, OBJECT_ID, OBJECT_VERSION, LOC) VALUES ('acct1', 'bucket1', 'obj1', '1111', 'loc1')");
+            ResultSet rs = conn.createStatement().executeQuery("select ACCOUNT_ID, BUCKET_ID, OBJECT_VERSION  from test2961  WHERE ACCOUNT_ID = 'acct1' and BUCKET_ID = 'bucket1' and OBJECT_VERSION = '1111'");
+            assertTrue(rs.next());
+            rs = conn.createStatement().executeQuery("select ACCOUNT_ID, BUCKET_ID, OBJECT_VERSION  from test2961  WHERE ACCOUNT_ID = 'acct1' and BUCKET_ID = 'bucket1' and OBJECT_ID = 'obj1'");
+            assertTrue(rs.next());
+            rs = conn.createStatement().executeQuery("select ACCOUNT_ID, BUCKET_ID, OBJECT_VERSION  from test2961  WHERE ACCOUNT_ID = 'acct1' and BUCKET_ID = 'bucket1' and OBJECT_VERSION = '1111'  and OBJECT_ID = 'obj1'");
+            assertTrue(rs.next());
+
+            conn.createStatement().execute("UPSERT INTO test2961  (ACCOUNT_ID, BUCKET_ID, OBJECT_ID, OBJECT_VERSION, LOC) VALUES ('acct1', 'bucket1', 'obj1', '2222', 'loc1')");
+            rs = conn.createStatement().executeQuery("SELECT  OBJ.ACCOUNT_ID, OBJ.BUCKET_ID, OBJ.OBJECT_ID, OBJ.OBJECT_VERSION, OBJ.LOC "
+                    + "FROM ( SELECT ACCOUNT_ID, BUCKET_ID, OBJECT_ID, MAX(OBJECT_VERSION) AS MAXVER"
+                    + "       FROM test2961 GROUP BY ACCOUNT_ID, BUCKET_ID, OBJECT_ID) AS X "
+                    + "       INNER JOIN test2961 AS OBJ ON X.ACCOUNT_ID = OBJ.ACCOUNT_ID AND X.BUCKET_ID = OBJ.BUCKET_ID AND X.OBJECT_ID = OBJ.OBJECT_ID AND X.MAXVER = OBJ.OBJECT_VERSION");
+            assertTrue(rs.next());
+            assertEquals("2222", rs.getString(4));
+            assertFalse(rs.next());
+
+            rs = conn.createStatement().executeQuery("SELECT  OBJ.ACCOUNT_ID, OBJ.BUCKET_ID, OBJ.OBJECT_ID, OBJ.OBJECT_VERSION, OBJ.LOC "
+                    + "FROM ( SELECT ACCOUNT_ID, BUCKET_ID, OBJECT_ID, MAX(OBJECT_VERSION) AS MAXVER "
+                    + "       FROM test2961 GROUP BY ACCOUNT_ID, BUCKET_ID, OBJECT_ID) AS X "
+                    + "       INNER JOIN test2961 AS OBJ ON X.ACCOUNT_ID = OBJ.ACCOUNT_ID AND X.OBJECT_ID = OBJ.OBJECT_ID AND X.MAXVER = OBJ.OBJECT_VERSION");
+            assertTrue(rs.next());
+            assertEquals("2222", rs.getString(4));
+            assertFalse(rs.next());
+
+            rs = conn.createStatement().executeQuery("SELECT  OBJ.ACCOUNT_ID, OBJ.BUCKET_ID, OBJ.OBJECT_ID, OBJ.OBJECT_VERSION, OBJ.LOC "
+                    + "FROM ( SELECT ACCOUNT_ID, BUCKET_ID, OBJECT_ID, MAX(OBJECT_VERSION) AS MAXVER "
+                    + "       FROM test2961 GROUP BY ACCOUNT_ID, BUCKET_ID, OBJECT_ID) AS X "
+                    + "       INNER JOIN test2961 AS OBJ ON X.ACCOUNT_ID = OBJ.ACCOUNT_ID AND X.BUCKET_ID = OBJ.BUCKET_ID AND  X.MAXVER = OBJ.OBJECT_VERSION");
+            assertTrue(rs.next());
+            assertEquals("2222", rs.getString(4));
+            assertFalse(rs.next());
+
+            conn.createStatement().execute("UPSERT INTO test2961  (ACCOUNT_ID, BUCKET_ID, OBJECT_ID, OBJECT_VERSION, LOC) VALUES ('acct1', 'bucket1', 'obj2', '1111', 'loc1')");
+            conn.createStatement().execute("UPSERT INTO test2961  (ACCOUNT_ID, BUCKET_ID, OBJECT_ID, OBJECT_VERSION, LOC) VALUES ('acct1', 'bucket1', 'obj3', '1111', 'loc1')");
+            String q = "SELECT  OBJ.ACCOUNT_ID, OBJ.BUCKET_ID, OBJ.OBJECT_ID, OBJ.OBJECT_VERSION, OBJ.LOC "
+                    + "FROM ( SELECT ACCOUNT_ID, BUCKET_ID, OBJECT_ID, MAX(OBJECT_VERSION) AS MAXVER "
+                    + "       FROM test2961 GROUP BY ACCOUNT_ID, BUCKET_ID, OBJECT_ID) AS X "
+                    + "       INNER JOIN test2961 AS OBJ ON X.ACCOUNT_ID = OBJ.ACCOUNT_ID AND X.BUCKET_ID = OBJ.BUCKET_ID AND X.OBJECT_ID = OBJ.OBJECT_ID AND  X.MAXVER = OBJ.OBJECT_VERSION";
+            rs = conn.createStatement().executeQuery(q);
+            assertTrue(rs.next());
+            assertEquals("2222", rs.getString(4));
+            assertTrue(rs.next());
+            assertEquals("1111", rs.getString(4));
+            assertTrue(rs.next());
+            assertEquals("1111", rs.getString(4));
             assertFalse(rs.next());
         } finally {
             conn.close();

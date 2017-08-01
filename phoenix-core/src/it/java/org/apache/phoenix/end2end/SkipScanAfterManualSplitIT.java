@@ -28,7 +28,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.Map;
+import java.util.Properties;
 
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
@@ -36,14 +36,12 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.query.ConnectionQueryServices;
 import org.apache.phoenix.query.QueryServices;
-import org.apache.phoenix.util.ReadOnlyProps;
-import org.junit.BeforeClass;
+import org.apache.phoenix.util.PropertiesUtil;
+import org.apache.phoenix.util.TestUtil;
 import org.junit.Test;
 
-import com.google.common.collect.Maps;
 
-
-public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
+public class SkipScanAfterManualSplitIT extends ParallelStatsDisabledIT {
 
     private static final int BATCH_SIZE = 25;
     private static final int MAX_FILESIZE = 1024 * 10;
@@ -56,32 +54,23 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
         }
         PAYLOAD = buf.toString();
     }
-    private static final String TABLE_NAME = "S";
-    private static final byte[] TABLE_NAME_BYTES = Bytes.toBytes(TABLE_NAME);
     private static final int MIN_CHAR = 'a';
     private static final int MAX_CHAR = 'z';
 
-    @BeforeClass
-    @Shadower(classBeingShadowed = BaseHBaseManagedTimeIT.class)
-    public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(2);
-        // needed for 64 region parallelization due to splitting
-        // props.put(QueryServices.THREAD_POOL_SIZE_ATTRIB, Integer.toString(64));
-        props.put(QueryServices.THREAD_POOL_SIZE_ATTRIB, Integer.toString(32));
-        // enables manual splitting on salted tables
-        props.put(QueryServices.FORCE_ROW_KEY_ORDER_ATTRIB, Boolean.toString(false));
-        props.put(QueryServices.QUEUE_SIZE_ATTRIB, Integer.toString(1000));
-        props.put(QueryServices.DROP_METADATA_ATTRIB, Boolean.toString(true));
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
+    private static Connection getConnection() throws SQLException {
+        Properties props = PropertiesUtil.deepCopy(TestUtil.TEST_PROPERTIES);
+        props.setProperty(QueryServices.FORCE_ROW_KEY_ORDER_ATTRIB, Boolean.toString(false));
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        return conn;
     }
     
-    private static void initTable() throws Exception {
-        Connection conn = DriverManager.getConnection(getUrl());
-        conn.createStatement().execute("CREATE TABLE " + TABLE_NAME + "("
+    private static void initTable(String tableName) throws Exception {
+        Connection conn = getConnection();
+        conn.createStatement().execute("CREATE TABLE " + tableName + "("
                 + "a VARCHAR PRIMARY KEY, b VARCHAR) " 
                 + HTableDescriptor.MAX_FILESIZE + "=" + MAX_FILESIZE + ","
                 + " SALT_BUCKETS = 4");
-        PreparedStatement stmt = conn.prepareStatement("UPSERT INTO s VALUES(?,?)");
+        PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + tableName + " VALUES(?,?)");
         int rowCount = 0;
         for (int c1 = MIN_CHAR; c1 <= MAX_CHAR; c1++) {
             for (int c2 = MIN_CHAR; c2 <= MAX_CHAR; c2++) {
@@ -99,7 +88,7 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
         ConnectionQueryServices services = conn.unwrap(PhoenixConnection.class).getQueryServices();
         HBaseAdmin admin = services.getAdmin();
         try {
-            admin.flush(TABLE_NAME);
+            admin.flush(tableName);
         } finally {
             admin.close();
         }
@@ -108,18 +97,20 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testManualSplit() throws Exception {
-        initTable();
-        Connection conn = DriverManager.getConnection(getUrl());
+        String tableName = generateUniqueName();
+        byte[] tableNameBytes = Bytes.toBytes(tableName);
+        initTable(tableName);
+        Connection conn = getConnection();
         ConnectionQueryServices services = conn.unwrap(PhoenixConnection.class).getQueryServices();
-        int nRegions = services.getAllTableRegions(TABLE_NAME_BYTES).size();
+        int nRegions = services.getAllTableRegions(tableNameBytes).size();
         int nInitialRegions = nRegions;
         HBaseAdmin admin = services.getAdmin();
         try {
-            admin.split(TABLE_NAME);
+            admin.split(tableName);
             int nTries = 0;
             while (nRegions == nInitialRegions && nTries < 10) {
                 Thread.sleep(1000);
-                nRegions = services.getAllTableRegions(TABLE_NAME_BYTES).size();
+                nRegions = services.getAllTableRegions(tableNameBytes).size();
                 nTries++;
             }
             // Split finished by this time, but cache isn't updated until
@@ -127,10 +118,10 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
             assertEquals(nRegions, nInitialRegions);
             
             int nRows = 2;
-            String query = "SELECT count(*) FROM S WHERE a IN ('tl','jt',' a',' b',' c',' d')";
+            String query = "SELECT count(*) FROM " + tableName + " WHERE a IN ('tl','jt',' a',' b',' c',' d')";
             ResultSet rs1 = conn.createStatement().executeQuery(query);
             assertTrue(rs1.next());
-            nRegions = services.getAllTableRegions(TABLE_NAME_BYTES).size();
+            nRegions = services.getAllTableRegions(tableNameBytes).size();
             // Region cache has been updated, as there are more regions now
             assertNotEquals(nRegions, nInitialRegions);
             /*
@@ -280,9 +271,9 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
      */
     @Test
     public void testSkipScanInListOfRVCAfterManualSplit() throws SQLException {
-        Connection conn = DriverManager.getConnection(getUrl());
-
-        String ddl = "CREATE TABLE FIELD_HISTORY_ARCHIVE ( "
+        Connection conn = getConnection();
+        String tableName = generateUniqueName();
+        String ddl = "CREATE TABLE " + tableName + " ( "
             + "organization_id CHAR(15) NOT NULL, "
             + "parent_id CHAR(15) NOT NULL, "
             + "created_date DATE NOT NULL, "
@@ -307,7 +298,7 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
         ddlStmt.execute();
         conn.commit();
         
-        final String upsertPrefix = "UPSERT INTO FIELD_HISTORY_ARCHIVE VALUES ( '00Dxx0000001gER', ";
+        final String upsertPrefix = "UPSERT INTO " + tableName + " VALUES ( '00Dxx0000001gER', ";
         conn.createStatement().executeUpdate(upsertPrefix + "'001xx000003DGr4', TO_DATE('2014-07-11 20:53:01'), '017xx0000022MmH', '005xx000001Sv21' )");
         conn.createStatement().executeUpdate(upsertPrefix + "'001xx000003DGr5', TO_DATE('2014-07-11 20:53:01'), '017xx0000022Mln', '005xx000001Sv21' )");
         conn.createStatement().executeUpdate(upsertPrefix + "'001xx000003DGsy', TO_DATE('2014-07-11 20:53:01'), '017xx0000022MsO', '005xx000001Sv21' )");
@@ -318,8 +309,8 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
         
         String sql = "SELECT "
             + "CREATED_BY_ID, PARENT_ID "
-            + "FROM FIELD_HISTORY_ARCHIVE "
-            + "WHERE ORGANIZATION_ID='00Dxx0000001gER' "
+            + "FROM " + tableName
+            + " WHERE ORGANIZATION_ID='00Dxx0000001gER' "
             + "AND (PARENT_ID,CREATED_DATE,ENTITY_HISTORY_ID)  IN  ("
             + "('001xx000003DGr4',TO_DATE('2014-07-11 20:53:01'),'017xx0000022MmH'),"
             + "('001xx000003DGr5',TO_DATE('2014-07-11 20:53:01'),'017xx0000022Mln'),"
@@ -349,9 +340,9 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
 
     @Test
     public void testMinMaxRangeIntersection() throws Exception {
-        Connection conn = DriverManager.getConnection(getUrl());
-        
-        PreparedStatement stmt = conn.prepareStatement("create table splits_test "
+        Connection conn = getConnection();
+        String tableName = generateUniqueName();
+        PreparedStatement stmt = conn.prepareStatement("create table " + tableName
             + "(pk1 UNSIGNED_TINYINT NOT NULL, pk2 UNSIGNED_TINYINT NOT NULL, kv VARCHAR "
             + "CONSTRAINT pk PRIMARY KEY (pk1, pk2)) SALT_BUCKETS=4 SPLIT ON (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         // Split each salt bucket into multiple regions
@@ -370,7 +361,7 @@ public class SkipScanAfterManualSplitIT extends BaseHBaseManagedTimeIT {
         stmt.execute();
         
         // Use a query with a RVC in a non equality expression
-        ResultSet rs = conn.createStatement().executeQuery("select count(kv) from splits_test where pk1 <= 3 and (pk1,PK2) >= (3, 1)");
+        ResultSet rs = conn.createStatement().executeQuery("select count(kv) from " + tableName + " where pk1 <= 3 and (pk1,PK2) >= (3, 1)");
         assertTrue(rs.next());
     }
 }

@@ -23,6 +23,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -31,81 +32,96 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Map;
+import java.util.List;
 import java.util.Properties;
 
-import org.apache.phoenix.end2end.BaseHBaseManagedTimeIT;
-import org.apache.phoenix.end2end.Shadower;
+import jline.internal.Log;
+
+import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.MetaTableAccessor;
+import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.HTableInterface;
+import org.apache.hadoop.hbase.snapshot.SnapshotTestingUtils;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Threads;
+import org.apache.phoenix.end2end.ParallelStatsDisabledIT;
 import org.apache.phoenix.jdbc.PhoenixConnection;
+import org.apache.phoenix.query.BaseTest;
+import org.apache.phoenix.query.ConnectionQueryServices;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.PTableKey;
+import org.apache.phoenix.util.ByteUtil;
+import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.QueryUtil;
-import org.apache.phoenix.util.ReadOnlyProps;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.TestUtil;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-import com.google.common.collect.Maps;
 import com.google.common.primitives.Doubles;
 
 @RunWith(Parameterized.class)
-public class MutableIndexIT extends BaseHBaseManagedTimeIT {
+public class MutableIndexIT extends ParallelStatsDisabledIT {
     
     protected final boolean localIndex;
     private final String tableDDLOptions;
-    private final String tableName;
-    private final String indexName;
-    private final String fullTableName;
-    private final String fullIndexName;
 	
-    public MutableIndexIT(boolean localIndex, boolean transactional) {
+    public MutableIndexIT(boolean localIndex, boolean transactional, boolean columnEncoded) {
 		this.localIndex = localIndex;
 		StringBuilder optionBuilder = new StringBuilder();
 		if (transactional) {
 			optionBuilder.append("TRANSACTIONAL=true");
 		}
+		if (!columnEncoded) {
+            if (optionBuilder.length()!=0)
+                optionBuilder.append(",");
+            optionBuilder.append("COLUMN_ENCODED_BYTES=0");
+        }
 		this.tableDDLOptions = optionBuilder.toString();
-		this.tableName = TestUtil.DEFAULT_DATA_TABLE_NAME + ( transactional ?  "_TXN" : "");
-        this.indexName = "IDX" + ( transactional ?  "_TXN" : "");
-        this.fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
-        this.fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
 	}
     
-    @BeforeClass
-    @Shadower(classBeingShadowed = BaseHBaseManagedTimeIT.class)
-    public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(1);
-        props.put(QueryServices.TRANSACTIONS_ENABLED, Boolean.toString(true));
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
+    private static Connection getConnection(Properties props) throws SQLException {
+        props.setProperty(QueryServices.INDEX_MUTATE_BATCH_SIZE_THRESHOLD_ATTRIB, Integer.toString(1));
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        return conn;
     }
-	
-	@Parameters(name="localIndex = {0} , transactional = {1}")
+    
+    private static Connection getConnection() throws SQLException {
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        return getConnection(props);
+    }
+    
+	@Parameters(name="MutableIndexIT_localIndex={0},transactional={1},columnEncoded={2}") // name is used by failsafe as file name in reports
     public static Collection<Boolean[]> data() {
-        return Arrays.asList(new Boolean[][] {     
-                 { false, false }, { false, true }, { true, false }, { true, true }
-           });
+        return Arrays.asList(new Boolean[][] { 
+                { false, false, false }, { false, false, true },
+                { false, true, false }, { false, true, true },
+                { true, false, false }, { true, false, true },
+                { true, true, false }, { true, true, true } });
     }
     
     @Test
     public void testCoveredColumnUpdates() throws Exception {
-    	Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
+        try (Connection conn = getConnection()) {
 	        conn.setAutoCommit(false);
-            createMultiCFTestTable(fullTableName, tableDDLOptions);
+			String tableName = "TBL_" + generateUniqueName();
+			String indexName = "IDX_" + generateUniqueName();
+			String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+			String fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
+
+			TestUtil.createMultiCFTestTable(conn, fullTableName, tableDDLOptions);
             populateMultiCFTestTable(fullTableName);
-            PreparedStatement stmt = conn.prepareStatement("CREATE " + (localIndex ? " LOCAL " : "") + " INDEX " + indexName + " ON " + fullTableName 
+            conn.createStatement().execute("CREATE " + (localIndex ? " LOCAL " : "") + " INDEX " + indexName + " ON " + fullTableName 
             		+ " (char_col1 ASC, int_col1 ASC) INCLUDE (long_col1, long_col2)");
-            stmt.execute();
             
             String query = "SELECT char_col1, int_col1, long_col2 from " + fullTableName;
             ResultSet rs = conn.createStatement().executeQuery("EXPLAIN " + query);
             if (localIndex) {
-                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_" + fullTableName +" [-32768]\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));
+                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + fullTableName +" [1]\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));
             } else {
                 assertEquals("CLIENT PARALLEL 1-WAY FULL SCAN OVER " + fullIndexName, QueryUtil.getExplainPlan(rs));
             }
@@ -125,7 +141,7 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
             assertEquals(5L, rs.getLong(3));
             assertFalse(rs.next());
             
-            stmt = conn.prepareStatement("UPSERT INTO " + fullTableName
+            PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + fullTableName
                     + "(varchar_pk, char_pk, int_pk, long_pk , decimal_pk, long_col2) SELECT varchar_pk, char_pk, int_pk, long_pk , decimal_pk, long_col2*2 FROM "
                     + fullTableName + " WHERE long_col2=?");
             stmt.setLong(1,4L);
@@ -148,7 +164,7 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
             
             stmt = conn.prepareStatement("UPSERT INTO " + fullTableName
-                    + "(varchar_pk, char_pk, int_pk, long_pk , decimal_pk, long_col2) SELECT varchar_pk, char_pk, int_pk, long_pk , decimal_pk, null FROM "
+                    + "(varchar_pk, char_pk, int_pk, long_pk , decimal_pk, long_col2) SELECT varchar_pk, char_pk, int_pk, long_pk , decimal_pk, CAST(null AS BIGINT) FROM "
                     + fullTableName + " WHERE long_col2=?");
             stmt.setLong(1,3L);
             assertEquals(1,stmt.executeUpdate());
@@ -172,7 +188,7 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
             if(localIndex) {
                 query = "SELECT b.* from " + fullTableName + " where int_col1 = 4";
                 rs = conn.createStatement().executeQuery("EXPLAIN " + query);
-                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_" + fullTableName +" [-32768]\n" +
+                assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + fullTableName +" [1]\n" +
                 		"    SERVER FILTER BY TO_INTEGER(\"INT_COL1\") = 4\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));
                 rs = conn.createStatement().executeQuery(query);
                 assertTrue(rs.next());
@@ -188,8 +204,12 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testCoveredColumns() throws Exception {
-    	Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
+		String tableName = "TBL_" + generateUniqueName();
+		String indexName = "IDX_" + generateUniqueName();
+		String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+		String fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
+        try (Connection conn = getConnection()) {
+
 	        conn.setAutoCommit(false);
 	        String query;
 	        ResultSet rs;
@@ -235,7 +255,7 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
 	        query = "SELECT * FROM " + fullTableName;
 	        rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 	        if(localIndex) {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_" + fullTableName+" [-32768]\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));            
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + fullTableName+" [1]\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));            
 	        } else {
 	            assertEquals("CLIENT PARALLEL 1-WAY FULL SCAN OVER " + fullIndexName, QueryUtil.getExplainPlan(rs));
 	        }
@@ -256,7 +276,7 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
 	        query = "SELECT * FROM " + fullTableName;
 	        rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 	        if(localIndex) {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_" + fullTableName + " [-32768]\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));            
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + fullTableName + " [1]\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));            
 	        } else {
 	            assertEquals("CLIENT PARALLEL 1-WAY FULL SCAN OVER " + fullIndexName, QueryUtil.getExplainPlan(rs));
 	        }
@@ -277,7 +297,7 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
 	        query = "SELECT * FROM " + fullTableName;
 	        rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 	        if(localIndex) {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_" + fullTableName+" [-32768]\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));            
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + fullTableName+" [1]\nCLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));            
 	        } else {
 	            assertEquals("CLIENT PARALLEL 1-WAY FULL SCAN OVER " + fullIndexName, QueryUtil.getExplainPlan(rs));
 	        }
@@ -293,8 +313,11 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
 
     @Test
     public void testCompoundIndexKey() throws Exception {
-    	Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
+		String tableName = "TBL_" + generateUniqueName();
+		String indexName = "IDX_" + generateUniqueName();
+		String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+		String fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
+        try (Connection conn = getConnection()) {
 	        conn.setAutoCommit(false);
 	        String query;
 	        ResultSet rs;
@@ -342,7 +365,7 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
 	        query = "SELECT * FROM " + fullTableName;
 	        rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 	        if (localIndex) {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_" + fullTableName+" [-32768]\n"
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + fullTableName+" [1]\n"
 	                    + "    SERVER FILTER BY FIRST KEY ONLY\n"
 	                    + "CLIENT MERGE SORT", QueryUtil.getExplainPlan(rs));
 	        } else {
@@ -408,8 +431,11 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
      */
     @Test
     public void testMultipleUpdatesToSingleRow() throws Exception {
-    	Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
+		String tableName = "TBL_" + generateUniqueName();
+		String indexName = "IDX_" + generateUniqueName();
+		String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+		String fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
+        try (Connection conn = getConnection()) {
 	        conn.setAutoCommit(false);
 	        String query;
 	        ResultSet rs;
@@ -466,7 +492,7 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
 	        query = "SELECT * FROM " + fullTableName;
 	        rs = conn.createStatement().executeQuery("EXPLAIN " + query);
 	        if(localIndex) {
-	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER _LOCAL_IDX_" + fullTableName+" [-32768]\n"
+	            assertEquals("CLIENT PARALLEL 1-WAY RANGE SCAN OVER " + fullTableName+" [1]\n"
 	                    + "    SERVER FILTER BY FIRST KEY ONLY\n"
 	                    + "CLIENT MERGE SORT",
 	                QueryUtil.getExplainPlan(rs));
@@ -488,9 +514,11 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testUpsertingNullForIndexedColumns() throws Exception {
-    	Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+		String tableName = "TBL_" + generateUniqueName();
+		String indexName = "IDX_" + generateUniqueName();
+		String fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
         String testTableName = tableName + "_" + System.currentTimeMillis();
-        try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
+        try (Connection conn = getConnection()) {
 	        conn.setAutoCommit(false);
 	        ResultSet rs;
     		Statement stmt = conn.createStatement();
@@ -572,10 +600,10 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
     public void testAlterTableWithImmutability() throws Exception {
         String query;
         ResultSet rs;
-        String tableName = TestUtil.DEFAULT_DATA_TABLE_NAME + "_" + System.currentTimeMillis();
-        String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
+		String tableName = "TBL_" + generateUniqueName();
+		String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+
+        try (Connection conn = getConnection()) {
 	        conn.setAutoCommit(false);
 	        conn.createStatement().execute(
 	            "CREATE TABLE " + fullTableName +" (k VARCHAR NOT NULL PRIMARY KEY, v VARCHAR) " + tableDDLOptions);
@@ -594,4 +622,200 @@ public class MutableIndexIT extends BaseHBaseManagedTimeIT {
         }
     }
 
+    private void createTableAndLoadData(Connection conn1, String tableName, String indexName, String[] strings, boolean isReverse) throws SQLException {
+        createBaseTable(conn1, tableName, null);
+        for (int i = 0; i < 26; i++) {
+            conn1.createStatement().execute(
+                "UPSERT INTO " + tableName + " values('"+strings[i]+"'," + i + ","
+                        + (i + 1) + "," + (i + 2) + ",'" + strings[25 - i] + "')");
+        }
+        conn1.commit();
+        conn1.createStatement().execute(
+            "CREATE " + (localIndex ? "LOCAL" : "")+" INDEX " + indexName + " ON " + tableName + "(v1"+(isReverse?" DESC":"")+") include (k3)");
+    }
+
+    @Test
+    public void testIndexHalfStoreFileReader() throws Exception {
+        Connection conn1 = getConnection();
+        ConnectionQueryServices connectionQueryServices = driver.getConnectionQueryServices(getUrl(), TestUtil.TEST_PROPERTIES);
+		HBaseAdmin admin = connectionQueryServices.getAdmin();
+		String tableName = "TBL_" + generateUniqueName();
+		String indexName = "IDX_" + generateUniqueName();
+        createBaseTable(conn1, tableName, "('e')");
+        conn1.createStatement().execute("CREATE "+(localIndex?"LOCAL":"")+" INDEX " + indexName + " ON " + tableName + "(v1)" + (localIndex?"":" SPLIT ON ('e')"));
+        conn1.createStatement().execute("UPSERT INTO "+tableName+" values('b',1,2,4,'z')");
+        conn1.createStatement().execute("UPSERT INTO "+tableName+" values('f',1,2,3,'z')");
+        conn1.createStatement().execute("UPSERT INTO "+tableName+" values('j',2,4,2,'a')");
+        conn1.createStatement().execute("UPSERT INTO "+tableName+" values('q',3,1,1,'c')");
+        conn1.commit();
+        
+
+        String query = "SELECT count(*) FROM " + tableName +" where v1<='z'";
+        ResultSet rs = conn1.createStatement().executeQuery(query);
+        assertTrue(rs.next());
+        assertEquals(4, rs.getInt(1));
+
+        TableName indexTable = TableName.valueOf(localIndex?tableName: indexName);
+        admin.flush(indexTable);
+        boolean merged = false;
+        HTableInterface table = connectionQueryServices.getTable(indexTable.getName());
+        // merge regions until 1 left
+        long numRegions = 0;
+        while (true) {
+          rs = conn1.createStatement().executeQuery(query);
+          assertTrue(rs.next());
+          assertEquals(4, rs.getInt(1)); //TODO this returns 5 sometimes instead of 4, duplicate results?
+          try {
+            List<HRegionInfo> indexRegions = admin.getTableRegions(indexTable);
+            numRegions = indexRegions.size();
+            if (numRegions==1) {
+              break;
+            }
+            if(!merged) {
+                      List<HRegionInfo> regions =
+                              admin.getTableRegions(indexTable);
+                Log.info("Merging: " + regions.size());
+                admin.mergeRegions(regions.get(0).getEncodedNameAsBytes(),
+                    regions.get(1).getEncodedNameAsBytes(), false);
+                merged = true;
+                Threads.sleep(10000);
+            }
+          } catch (Exception ex) {
+            Log.info(ex);
+          }
+          long waitStartTime = System.currentTimeMillis();
+          // wait until merge happened
+          while (System.currentTimeMillis() - waitStartTime < 10000) {
+            List<HRegionInfo> regions = admin.getTableRegions(indexTable);
+            Log.info("Waiting:" + regions.size());
+            if (regions.size() < numRegions) {
+              break;
+            }
+            Threads.sleep(1000);
+          }
+          SnapshotTestingUtils.waitForTableToBeOnline(BaseTest.getUtility(), indexTable);
+          assertTrue("Index table should be online ", admin.isTableAvailable(indexTable));
+        }
+    }
+
+
+    private List<HRegionInfo> splitDuringScan(Connection conn1, String tableName, String indexName, String[] strings, HBaseAdmin admin, boolean isReverse)
+            throws SQLException, IOException, InterruptedException {
+        ResultSet rs;
+
+        String query = "SELECT t_id,k1,v1 FROM " + tableName;
+        rs = conn1.createStatement().executeQuery(query);
+        String[] tIdColumnValues = new String[26]; 
+        String[] v1ColumnValues = new String[26];
+        int[] k1ColumnValue = new int[26];
+        for (int j = 0; j < 5; j++) {
+            assertTrue(rs.next());
+            tIdColumnValues[j] = rs.getString("t_id");
+            k1ColumnValue[j] = rs.getInt("k1");
+            v1ColumnValues[j] = rs.getString("V1");
+        }
+
+        String[] splitKeys = new String[2];
+        splitKeys[0] = strings[4];
+        splitKeys[1] = strings[12];
+
+        int[] splitInts = new int[2];
+        splitInts[0] = 22;
+        splitInts[1] = 4;
+        List<HRegionInfo> regionsOfUserTable = null;
+        for(int i = 0; i <=1; i++) {
+            Threads.sleep(10000);
+            if(localIndex) {
+                admin.split(Bytes.toBytes(tableName),
+                    ByteUtil.concat(Bytes.toBytes(splitKeys[i])));
+            } else {
+                admin.split(Bytes.toBytes(indexName), ByteUtil.concat(Bytes.toBytes(splitInts[i])));
+            }
+            Thread.sleep(100);
+            regionsOfUserTable =
+                    MetaTableAccessor.getTableRegions(getUtility().getZooKeeperWatcher(),
+                        admin.getConnection(), TableName.valueOf(localIndex?tableName:indexName),
+                        false);
+
+            while (regionsOfUserTable.size() != (i+2)) {
+                Thread.sleep(100);
+                regionsOfUserTable =
+                        MetaTableAccessor.getTableRegions(getUtility().getZooKeeperWatcher(),
+                            admin.getConnection(),
+                            TableName.valueOf(localIndex?tableName:indexName), false);
+            }
+            assertEquals(i+2, regionsOfUserTable.size());
+        }
+        for (int j = 5; j < 26; j++) {
+            assertTrue(rs.next());
+            tIdColumnValues[j] = rs.getString("t_id");
+            k1ColumnValue[j] = rs.getInt("k1");
+            v1ColumnValues[j] = rs.getString("V1");
+        }
+        Arrays.sort(tIdColumnValues);
+        Arrays.sort(v1ColumnValues);
+        Arrays.sort(k1ColumnValue);
+        assertTrue(Arrays.equals(strings, tIdColumnValues));
+        assertTrue(Arrays.equals(strings, v1ColumnValues));
+        for(int i=0;i<26;i++) {
+            assertEquals(i, k1ColumnValue[i]);
+        }
+        assertFalse(rs.next());
+        return regionsOfUserTable;
+    }
+
+    private void createBaseTable(Connection conn, String tableName, String splits) throws SQLException {
+        String ddl = "CREATE TABLE " + tableName + " (t_id VARCHAR NOT NULL,\n" +
+                "k1 INTEGER NOT NULL,\n" +
+                "k2 INTEGER NOT NULL,\n" +
+                "k3 INTEGER,\n" +
+                "v1 VARCHAR,\n" +
+                "CONSTRAINT pk PRIMARY KEY (t_id, k1, k2))\n"
+                        + (tableDDLOptions!=null?tableDDLOptions:"") + (splits != null ? (" split on " + splits) : "");
+        conn.createStatement().execute(ddl);
+    }
+    
+  @Test
+  public void testTenantSpecificConnection() throws Exception {
+	  String tableName = "TBL_" + generateUniqueName();
+	  String indexName = "IDX_" + generateUniqueName();
+	  String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+	  Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+      try (Connection conn = getConnection()) {
+          conn.setAutoCommit(false);
+          // create data table
+          conn.createStatement().execute(
+              "CREATE TABLE IF NOT EXISTS " + fullTableName + 
+              "(TENANT_ID CHAR(15) NOT NULL,"+
+              "TYPE VARCHAR(25),"+
+              "ENTITY_ID CHAR(15) NOT NULL,"+
+              "CONSTRAINT PK_CONSTRAINT PRIMARY KEY (TENANT_ID, ENTITY_ID)) MULTI_TENANT=TRUE "
+              + (!tableDDLOptions.isEmpty() ? "," + tableDDLOptions : "") );
+          // create index
+          conn.createStatement().execute("CREATE INDEX IF NOT EXISTS " + indexName + " ON " + fullTableName + " (ENTITY_ID, TYPE)");
+          
+          // upsert rows
+          String dml = "UPSERT INTO " + fullTableName + " (ENTITY_ID, TYPE) VALUES ( ?, ?)";
+          props.setProperty(PhoenixRuntime.TENANT_ID_ATTRIB, "tenant1");
+          // connection is tenant-specific
+          try (Connection tenantConn = getConnection(props)) {
+              // upsert one row
+              upsertRow(dml, tenantConn, 0);
+              tenantConn.commit();
+              ResultSet rs = tenantConn.createStatement().executeQuery("SELECT ENTITY_ID FROM " + fullTableName + " ORDER BY TYPE LIMIT 5");
+              assertTrue(rs.next());
+              // upsert two rows which ends up using the tenant cache
+              upsertRow(dml, tenantConn, 1);
+              upsertRow(dml, tenantConn, 2);
+              tenantConn.commit();
+          }
+      }
+  }
+
+private void upsertRow(String dml, Connection tenantConn, int i) throws SQLException {
+    PreparedStatement stmt = tenantConn.prepareStatement(dml);
+      stmt.setString(1, "00000000000000" + String.valueOf(i));
+      stmt.setString(2, String.valueOf(i));
+      assertEquals(1,stmt.executeUpdate());
+}
 }

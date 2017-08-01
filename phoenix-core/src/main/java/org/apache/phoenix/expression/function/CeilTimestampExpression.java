@@ -22,19 +22,24 @@ import java.sql.Timestamp;
 import java.util.List;
 
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
-
-import com.google.common.collect.Lists;
 import org.apache.phoenix.expression.CoerceExpression;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.LiteralExpression;
+import org.apache.phoenix.schema.SortOrder;
+import org.apache.phoenix.schema.tuple.Tuple;
+import org.apache.phoenix.schema.types.PDataType;
+import org.apache.phoenix.schema.types.PDataType.PDataCodec;
 import org.apache.phoenix.schema.types.PDate;
 import org.apache.phoenix.schema.types.PTimestamp;
 import org.apache.phoenix.schema.types.PUnsignedDate;
 import org.apache.phoenix.schema.types.PUnsignedTimestamp;
-import org.apache.phoenix.schema.SortOrder;
-import org.apache.phoenix.schema.types.PDataType;
-import org.apache.phoenix.schema.types.PDataType.PDataCodec;
-import org.apache.phoenix.schema.tuple.Tuple;
+import org.apache.phoenix.schema.types.PVarchar;
+import org.apache.phoenix.schema.types.PInteger;
+import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
+import org.apache.phoenix.parse.FunctionParseNode.Argument;
+import org.apache.phoenix.parse.FunctionParseNode.FunctionClassType;
+
+import com.google.common.collect.Lists;
 
 /**
  * 
@@ -45,11 +50,19 @@ import org.apache.phoenix.schema.tuple.Tuple;
  * 
  * @since 3.0.0
  */
+@BuiltInFunction(name = CeilFunction.NAME,
+        args = {
+                @Argument(allowedTypes={PTimestamp.class}),
+                @Argument(allowedTypes={PVarchar.class, PInteger.class}, defaultValue = "null", isConstant=true),
+                @Argument(allowedTypes={PInteger.class}, defaultValue="1", isConstant=true)
+        },
+        classType = FunctionClassType.DERIVED
+)
 public class CeilTimestampExpression extends CeilDateExpression {
     
     public CeilTimestampExpression() {}
     
-    private CeilTimestampExpression(List<Expression> children) {
+    public CeilTimestampExpression(List<Expression> children) {
         super(children);
     }
     
@@ -97,6 +110,9 @@ public class CeilTimestampExpression extends CeilDateExpression {
     @Override
     public boolean evaluate(Tuple tuple, ImmutableBytesWritable ptr) {
         if (children.get(0).evaluate(tuple, ptr)) {
+            if (ptr.getLength() == 0) {
+                return true; // child evaluated to null
+            }
             SortOrder sortOrder = children.get(0).getSortOrder();
             PDataType dataType = getDataType();
             int nanos = dataType.getNanos(ptr, sortOrder);

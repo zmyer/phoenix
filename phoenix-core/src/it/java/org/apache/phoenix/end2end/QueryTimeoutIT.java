@@ -1,9 +1,7 @@
 /*
- * Copyright 2010 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
- *distributed with this work for additional information
+ * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you maynot use this file except in compliance
@@ -21,6 +19,7 @@ package org.apache.phoenix.end2end;
 
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -36,26 +35,36 @@ import java.util.Properties;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixStatement;
+import org.apache.phoenix.query.ConnectionQueryServices;
 import org.apache.phoenix.query.QueryServices;
+import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.util.PropertiesUtil;
+import org.apache.phoenix.util.QueryUtil;
 import org.apache.phoenix.util.ReadOnlyProps;
 import org.junit.After;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import com.google.common.collect.Maps;
 
 
-public class QueryTimeoutIT extends BaseOwnClusterHBaseManagedTimeIT {
-    private static final String TEST_TABLE_NAME = "T";
+public class QueryTimeoutIT extends BaseUniqueNamesOwnClusterIT {
+    private String tableName;
+    
+    @Before
+    public void generateTableName() throws SQLException {
+        tableName = generateUniqueName();
+    }
     
     @BeforeClass
     public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(3);
+        Map<String,String> props = Maps.newHashMapWithExpectedSize(5);
         // Must update config before starting server
         props.put(QueryServices.STATS_GUIDEPOST_WIDTH_BYTES_ATTRIB, Long.toString(700));
         props.put(QueryServices.QUEUE_SIZE_ATTRIB, Integer.toString(10000));
         props.put(QueryServices.EXPLAIN_CHUNK_COUNT_ATTRIB, Boolean.TRUE.toString());
+        props.put(QueryServices.EXTRA_JDBC_ARGUMENTS_ATTRIB, QueryServicesOptions.DEFAULT_EXTRA_JDBC_ARGUMENTS);
         setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
     }
     
@@ -71,14 +80,39 @@ public class QueryTimeoutIT extends BaseOwnClusterHBaseManagedTimeIT {
     }
     
     @Test
+    public void testSetRPCTimeOnConnection() throws Exception {
+        Properties overriddenProps = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        overriddenProps.put(QueryServices.EXTRA_JDBC_ARGUMENTS_ATTRIB, QueryServicesOptions.DEFAULT_EXTRA_JDBC_ARGUMENTS);
+        overriddenProps.setProperty("hbase.rpc.timeout", Long.toString(100));
+        String url = QueryUtil.getConnectionUrl(overriddenProps, config, "longRunning");
+        Connection conn1 = DriverManager.getConnection(url, overriddenProps);
+        ConnectionQueryServices s1 = conn1.unwrap(PhoenixConnection.class).getQueryServices();
+        ReadOnlyProps configProps = s1.getProps();
+        assertEquals("100", configProps.get("hbase.rpc.timeout"));
+        
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        props.put(QueryServices.EXTRA_JDBC_ARGUMENTS_ATTRIB, QueryServicesOptions.DEFAULT_EXTRA_JDBC_ARGUMENTS);
+        Connection conn2 = DriverManager.getConnection(getUrl(), props);
+        ConnectionQueryServices s2 = conn2.unwrap(PhoenixConnection.class).getQueryServices();
+        assertFalse(s1 == s2);
+        Connection conn3 = DriverManager.getConnection(getUrl(), props);
+        ConnectionQueryServices s3 = conn3.unwrap(PhoenixConnection.class).getQueryServices();
+        assertTrue(s2 == s3);
+        
+        Connection conn4 = DriverManager.getConnection(url, overriddenProps);
+        ConnectionQueryServices s4 = conn4.unwrap(PhoenixConnection.class).getQueryServices();
+        assertTrue(s1 == s4);
+    }
+    
+    @Test
     public void testQueryTimeout() throws Exception {
         int nRows = 30000;
         Connection conn;
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         conn = DriverManager.getConnection(getUrl(), props);
         conn.createStatement().execute(
-                "CREATE TABLE " + TEST_TABLE_NAME + "(k BIGINT PRIMARY KEY, v VARCHAR)");
-        PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + TEST_TABLE_NAME + " VALUES(?, 'AAAAAAAAAAAAAAAAAAAA')");
+                "CREATE TABLE " + tableName + "(k BIGINT PRIMARY KEY, v VARCHAR)");
+        PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + tableName + " VALUES(?, 'AAAAAAAAAAAAAAAAAAAA')");
         for (int i = 1; i <= nRows; i++) {
             stmt.setLong(1, i);
             stmt.executeUpdate();
@@ -87,13 +121,13 @@ public class QueryTimeoutIT extends BaseOwnClusterHBaseManagedTimeIT {
             }
         }
         conn.commit();
-        conn.createStatement().execute("UPDATE STATISTICS " + TEST_TABLE_NAME);
+        conn.createStatement().execute("UPDATE STATISTICS " + tableName);
         
         PhoenixStatement pstmt = conn.createStatement().unwrap(PhoenixStatement.class);
         pstmt.setQueryTimeout(1);
         long startTime = System.currentTimeMillis();
         try {
-            ResultSet rs = pstmt.executeQuery("SELECT count(*) FROM " + TEST_TABLE_NAME);
+            ResultSet rs = pstmt.executeQuery("SELECT count(*) FROM " + tableName);
             // Force lots of chunks so query is cancelled
             assertTrue(pstmt.getQueryPlan().getSplits().size() > 1000);
             rs.next();

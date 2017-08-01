@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
@@ -38,16 +39,14 @@ import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.parse.PFunction;
 import org.apache.phoenix.parse.PSchema;
 import org.apache.phoenix.schema.PColumn;
-import org.apache.phoenix.schema.PMetaData;
 import org.apache.phoenix.schema.PName;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.Sequence;
 import org.apache.phoenix.schema.SequenceAllocation;
 import org.apache.phoenix.schema.SequenceKey;
-import org.apache.phoenix.schema.stats.PTableStats;
-
-import co.cask.tephra.TransactionSystemClient;
+import org.apache.phoenix.schema.stats.GuidePostsInfo;
+import org.apache.phoenix.schema.stats.GuidePostsKey;
 
 
 public class DelegateConnectionQueryServices extends DelegateQueryServices implements ConnectionQueryServices {
@@ -77,35 +76,25 @@ public class DelegateConnectionQueryServices extends DelegateQueryServices imple
     }
 
     @Override
-    public PMetaData addTable(PTable table, long resolvedTime) throws SQLException {
-        return getDelegate().addTable(table, resolvedTime);
+    public void addTable(PTable table, long resolvedTime) throws SQLException {
+        getDelegate().addTable(table, resolvedTime);
     }
     
     @Override
-    public PMetaData updateResolvedTimestamp(PTable table, long resolvedTimestamp) throws SQLException {
-        return getDelegate().updateResolvedTimestamp(table, resolvedTimestamp);
+    public void updateResolvedTimestamp(PTable table, long resolvedTimestamp) throws SQLException {
+        getDelegate().updateResolvedTimestamp(table, resolvedTimestamp);
     }
 
     @Override
-    public PMetaData addColumn(PName tenantId, String tableName, List<PColumn> columns, long tableTimeStamp,
-            long tableSeqNum, boolean isImmutableRows, boolean isWalDisabled, boolean isMultitenant, boolean storeNulls,
-            boolean isTransactional, long updateCacheFrequency, boolean isNamespaceMapped, long resolvedTime)
-                    throws SQLException {
-        return getDelegate().addColumn(tenantId, tableName, columns, tableTimeStamp, tableSeqNum, isImmutableRows,
-                isWalDisabled, isMultitenant, storeNulls, isTransactional, updateCacheFrequency, isNamespaceMapped,
-                resolvedTime);
-    }
-
-    @Override
-    public PMetaData removeTable(PName tenantId, String tableName, String parentTableName, long tableTimeStamp)
+    public void removeTable(PName tenantId, String tableName, String parentTableName, long tableTimeStamp)
             throws SQLException {
-        return getDelegate().removeTable(tenantId, tableName, parentTableName, tableTimeStamp);
+        getDelegate().removeTable(tenantId, tableName, parentTableName, tableTimeStamp);
     }
 
     @Override
-    public PMetaData removeColumn(PName tenantId, String tableName, List<PColumn> columnsToRemove, long tableTimeStamp,
+    public void removeColumn(PName tenantId, String tableName, List<PColumn> columnsToRemove, long tableTimeStamp,
             long tableSeqNum, long resolvedTime) throws SQLException {
-        return getDelegate().removeColumn(tenantId, tableName, columnsToRemove, tableTimeStamp, tableSeqNum, resolvedTime);
+        getDelegate().removeColumn(tenantId, tableName, columnsToRemove, tableTimeStamp, tableSeqNum, resolvedTime);
     }
 
     @Override
@@ -121,9 +110,9 @@ public class DelegateConnectionQueryServices extends DelegateQueryServices imple
     @Override
     public MetaDataMutationResult createTable(List<Mutation> tableMetaData, byte[] physicalName, PTableType tableType,
             Map<String, Object> tableProps, List<Pair<byte[], Map<String, Object>>> families, byte[][] splits,
-            boolean isNamespaceMapped) throws SQLException {
+            boolean isNamespaceMapped, boolean allocateIndexId) throws SQLException {
         return getDelegate().createTable(tableMetaData, physicalName, tableType, tableProps, families, splits,
-                isNamespaceMapped);
+                isNamespaceMapped, allocateIndexId);
     }
 
     @Override
@@ -132,8 +121,8 @@ public class DelegateConnectionQueryServices extends DelegateQueryServices imple
     }
 
     @Override
-    public MetaDataMutationResult addColumn(List<Mutation> tableMetaData, PTable table, Map<String, List<Pair<String,Object>>> properties, Set<String> colFamiliesForPColumnsToBeAdded) throws SQLException {
-        return getDelegate().addColumn(tableMetaData, table, properties, colFamiliesForPColumnsToBeAdded);
+    public MetaDataMutationResult addColumn(List<Mutation> tableMetaData, PTable table, Map<String, List<Pair<String,Object>>> properties, Set<String> colFamiliesForPColumnsToBeAdded, List<PColumn> columns) throws SQLException {
+        return getDelegate().addColumn(tableMetaData, table, properties, colFamiliesForPColumnsToBeAdded, columns);
     }
 
 
@@ -251,8 +240,8 @@ public class DelegateConnectionQueryServices extends DelegateQueryServices imple
     }
 
     @Override
-    public PTableStats getTableStats(byte[] physicalName, long clientTimeStamp) throws SQLException {
-        return getDelegate().getTableStats(physicalName, clientTimeStamp);
+    public GuidePostsInfo getTableStats(GuidePostsKey key) throws SQLException {
+        return getDelegate().getTableStats(key);
     }
 
 
@@ -267,25 +256,20 @@ public class DelegateConnectionQueryServices extends DelegateQueryServices imple
     }
 
     @Override
-    public TransactionSystemClient getTransactionSystemClient() {
-        return getDelegate().getTransactionSystemClient();
-    }
-
-    @Override
     public MetaDataMutationResult createFunction(List<Mutation> functionData, PFunction function, boolean temporary)
             throws SQLException {
         return getDelegate().createFunction(functionData, function, temporary);
     }
 
     @Override
-    public PMetaData addFunction(PFunction function) throws SQLException {
-        return getDelegate().addFunction(function);
+    public void addFunction(PFunction function) throws SQLException {
+        getDelegate().addFunction(function);
     }
 
     @Override
-    public PMetaData removeFunction(PName tenantId, String function, long functionTimeStamp)
+    public void removeFunction(PName tenantId, String function, long functionTimeStamp)
             throws SQLException {
-        return getDelegate().removeFunction(tenantId, function, functionTimeStamp);
+        getDelegate().removeFunction(tenantId, function, functionTimeStamp);
     }
 
     @Override
@@ -318,8 +302,8 @@ public class DelegateConnectionQueryServices extends DelegateQueryServices imple
     }
 
     @Override
-    public PMetaData addSchema(PSchema schema) throws SQLException {
-        return getDelegate().addSchema(schema);
+    public void addSchema(PSchema schema) throws SQLException {
+        getDelegate().addSchema(schema);
     }
 
     @Override
@@ -333,12 +317,32 @@ public class DelegateConnectionQueryServices extends DelegateQueryServices imple
     }
 
     @Override
-    public PMetaData removeSchema(PSchema schema, long schemaTimeStamp) {
-        return getDelegate().removeSchema(schema, schemaTimeStamp);
+    public void removeSchema(PSchema schema, long schemaTimeStamp) {
+        getDelegate().removeSchema(schema, schemaTimeStamp);
     }
 
     @Override
     public MetaDataMutationResult dropSchema(List<Mutation> schemaMetaData, String schemaName) throws SQLException {
         return getDelegate().dropSchema(schemaMetaData, schemaName);
+    }
+
+    @Override
+    public void invalidateStats(GuidePostsKey key) {
+        getDelegate().invalidateStats(key);
+    }
+
+    @Override
+    public void upgradeSystemTables(String url, Properties props) throws SQLException {
+        getDelegate().upgradeSystemTables(url, props);
+    }
+
+    @Override
+    public boolean isUpgradeRequired() {
+        return getDelegate().isUpgradeRequired();
+    }
+
+    @Override
+    public Configuration getConfiguration() {
+        return getDelegate().getConfiguration();
     }
 }

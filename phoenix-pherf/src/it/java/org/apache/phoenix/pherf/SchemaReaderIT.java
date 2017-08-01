@@ -39,6 +39,7 @@ import org.apache.phoenix.pherf.schema.SchemaReader;
 import org.apache.phoenix.pherf.util.PhoenixUtil;
 import org.junit.Test;
 
+
 public class SchemaReaderIT extends BaseHBaseManagedTimeIT {
     protected static PhoenixUtil util = PhoenixUtil.create(true);
 

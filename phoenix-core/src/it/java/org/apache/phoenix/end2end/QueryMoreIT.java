@@ -22,12 +22,14 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.sql.Connection;
 import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,6 +39,9 @@ import java.util.Properties;
 
 import org.apache.hadoop.hbase.util.Base64;
 import org.apache.hadoop.hbase.util.Pair;
+import org.apache.phoenix.exception.SQLExceptionCode;
+import org.apache.phoenix.jdbc.PhoenixConnection;
+import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.TestUtil;
 import org.junit.Test;
@@ -44,7 +49,7 @@ import org.junit.Test;
 import com.google.common.collect.Lists;
 
 
-public class QueryMoreIT extends BaseHBaseManagedTimeTableReuseIT {
+public class QueryMoreIT extends ParallelStatsDisabledIT {
     
     private String dataTableName;
     //queryAgainstTenantSpecificView = true, dataTableSalted = true 
@@ -72,21 +77,21 @@ public class QueryMoreIT extends BaseHBaseManagedTimeTableReuseIT {
     }
     
     private void testQueryMore(boolean queryAgainstTenantSpecificView, boolean dataTableSalted) throws Exception {
-        String[] tenantIds = new String[] {"00Dxxxxxtenant1", "00Dxxxxxtenant2", "00Dxxxxxtenant3"};
+        String[] tenantIds = new String[] {"T1_" + generateUniqueName(), "T2_" + generateUniqueName(), "T3_" + generateUniqueName()};
         int numRowsPerTenant = 10;
-        String cursorTableName = generateRandomString();
-        String base_history_table = generateRandomString();
+        String cursorTableName = generateUniqueName();
+        String base_history_table = generateUniqueName();
         this.dataTableName = base_history_table + (dataTableSalted ? "_SALTED" : "");
         String cursorTableDDL = "CREATE TABLE IF NOT EXISTS " + 
                 cursorTableName +  " (\n" +  
-                "TENANT_ID VARCHAR(15) NOT NULL\n," +  
+                "TENANT_ID VARCHAR NOT NULL\n," +  
                 "QUERY_ID VARCHAR(15) NOT NULL,\n" +
                 "CURSOR_ORDER BIGINT NOT NULL \n" + 
                 "CONSTRAINT CURSOR_TABLE_PK PRIMARY KEY (TENANT_ID, QUERY_ID, CURSOR_ORDER)) "+
                 "SALT_BUCKETS = 4, TTL=86400";
         String baseDataTableDDL = "CREATE TABLE IF NOT EXISTS " +
                 dataTableName + " (\n" + 
-                "TENANT_ID CHAR(15) NOT NULL,\n" +
+                "TENANT_ID VARCHAR NOT NULL,\n" +
                 "PARENT_ID CHAR(15) NOT NULL,\n" + 
                 "CREATED_DATE DATE NOT NULL,\n" + 
                 "ENTITY_HISTORY_ID CHAR(15) NOT NULL,\n" + 
@@ -275,7 +280,7 @@ public class QueryMoreIT extends BaseHBaseManagedTimeTableReuseIT {
                 values[i] = rs.getObject(i + 1);
             }
             conn = getTenantSpecificConnection(tenantId);
-            pkIds.add(Base64.encodeBytes(PhoenixRuntime.encodeValues(conn, tableOrViewName.toUpperCase(), values, columns)));
+            pkIds.add(Base64.encodeBytes(PhoenixRuntime.encodeColumnValues(conn, tableOrViewName.toUpperCase(), values, columns)));
         }
         return pkIds.toArray(new String[pkIds.size()]);
     }
@@ -293,7 +298,7 @@ public class QueryMoreIT extends BaseHBaseManagedTimeTableReuseIT {
         PreparedStatement stmt = conn.prepareStatement(query);
         int bindCounter = 1;
         for (int i = 0; i < cursorIds.length; i++) {
-            Object[] pkParts = PhoenixRuntime.decodeValues(conn, tableName.toUpperCase(), Base64.decode(cursorIds[i]), columns);
+            Object[] pkParts = PhoenixRuntime.decodeColumnValues(conn, tableName.toUpperCase(), Base64.decode(cursorIds[i]), columns);
             for (int j = 0; j < pkParts.length; j++) {
                 stmt.setObject(bindCounter++, pkParts[j]);
             }
@@ -342,17 +347,17 @@ public class QueryMoreIT extends BaseHBaseManagedTimeTableReuseIT {
     @SuppressWarnings("deprecation")
     @Test
     public void testNullBigDecimalWithScale() throws Exception {
-        final String table = generateRandomString();
+        final String table = generateUniqueName();
         final Connection conn = DriverManager.getConnection(getUrl());
         conn.setAutoCommit(true);
         try (Statement stmt = conn.createStatement()) {
             assertFalse(stmt.execute("CREATE TABLE IF NOT EXISTS " + table + " (\n" +
                 "PK VARCHAR(15) NOT NULL\n," +
-                "DEC DECIMAL,\n" +
+                "\"DEC\" DECIMAL,\n" +
                 "CONSTRAINT TABLE_PK PRIMARY KEY (PK))"));
         }
 
-        try (PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + table + " (PK, DEC) VALUES(?, ?)")) {
+        try (PreparedStatement stmt = conn.prepareStatement("UPSERT INTO " + table + " (PK, \"DEC\") VALUES(?, ?)")) {
             stmt.setString(1, "key");
             stmt.setBigDecimal(2, null);
             assertFalse(stmt.execute());
@@ -366,6 +371,193 @@ public class QueryMoreIT extends BaseHBaseManagedTimeTableReuseIT {
             assertEquals("key", rs.getString(1));
             assertNull(rs.getBigDecimal(2));
             assertNull(rs.getBigDecimal(2, 10));
+        }
+    }
+    
+    // FIXME: this repros PHOENIX-3382, but turned up two more issues:
+    // 1) PHOENIX-3383 Comparison between descending row keys used in RVC is reverse
+    // 2) PHOENIX-3384 Optimize RVC expressions for non leading row key columns
+    @Test
+    public void testRVCOnDescWithLeadingPKEquality() throws Exception {
+        final Connection conn = DriverManager.getConnection(getUrl());
+        String fullTableName = generateUniqueName();
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE " + fullTableName + "(\n" + 
+                    "    ORGANIZATION_ID CHAR(15) NOT NULL,\n" + 
+                    "    SCORE DOUBLE NOT NULL,\n" + 
+                    "    ENTITY_ID CHAR(15) NOT NULL\n" + 
+                    "    CONSTRAINT PAGE_SNAPSHOT_PK PRIMARY KEY (\n" + 
+                    "        ORGANIZATION_ID,\n" + 
+                    "        SCORE DESC,\n" + 
+                    "        ENTITY_ID DESC\n" + 
+                    "    )\n" + 
+                    ") MULTI_TENANT=TRUE");
+        }
+        
+        conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES ('org1',3,'01')");
+        conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES ('org1',2,'04')");
+        conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES ('org1',2,'03')");
+        conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES ('org1',1,'02')");
+        conn.commit();
+
+        // FIXME: PHOENIX-3383
+        // This comparison is really backwards: it should be (score, entity_id) < (2, '04'),
+        // but because we're matching a descending key, our comparison has to be switched.
+        try (Statement stmt = conn.createStatement()) {
+            final ResultSet rs = stmt.executeQuery("SELECT entity_id, score\n" + 
+                    "FROM " + fullTableName + "\n" + 
+                    "WHERE organization_id = 'org1'\n" + 
+                    "AND (score, entity_id) > (2, '04')\n" + 
+                    "ORDER BY score DESC, entity_id DESC\n" + 
+                    "LIMIT 3");
+            assertTrue(rs.next());
+            assertEquals("03", rs.getString(1));
+            assertEquals(2.0, rs.getDouble(2), 0.001);
+            assertTrue(rs.next());
+            assertEquals("02", rs.getString(1));
+            assertEquals(1.0, rs.getDouble(2), 0.001);
+            assertFalse(rs.next());
+        }
+        // FIXME: PHOENIX-3384
+        // It should not be necessary to specify organization_id in this query
+        try (Statement stmt = conn.createStatement()) {
+            final ResultSet rs = stmt.executeQuery("SELECT entity_id, score\n" + 
+                    "FROM " + fullTableName + "\n" + 
+                    "WHERE organization_id = 'org1'\n" + 
+                    "AND (organization_id, score, entity_id) > ('org1', 2, '04')\n" + 
+                    "ORDER BY score DESC, entity_id DESC\n" + 
+                    "LIMIT 3");
+            assertTrue(rs.next());
+            assertEquals("03", rs.getString(1));
+            assertEquals(2.0, rs.getDouble(2), 0.001);
+            assertTrue(rs.next());
+            assertEquals("02", rs.getString(1));
+            assertEquals(1.0, rs.getDouble(2), 0.001);
+            assertFalse(rs.next());
+        }
+    }
+    
+    @Test
+    public void testSingleDescPKColumnComparison() throws Exception {
+        final Connection conn = DriverManager.getConnection(getUrl());
+        String fullTableName = generateUniqueName();
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE " + fullTableName + "(\n" + 
+                    "    ORGANIZATION_ID CHAR(15) NOT NULL,\n" + 
+                    "    SCORE DOUBLE NOT NULL,\n" + 
+                    "    ENTITY_ID CHAR(15) NOT NULL\n" + 
+                    "    CONSTRAINT PAGE_SNAPSHOT_PK PRIMARY KEY (\n" + 
+                    "        ORGANIZATION_ID,\n" + 
+                    "        SCORE DESC,\n" + 
+                    "        ENTITY_ID DESC\n" + 
+                    "    )\n" + 
+                    ") MULTI_TENANT=TRUE");
+        }
+        
+        conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES ('org1',3,'01')");
+        conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES ('org1',2,'04')");
+        conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES ('org1',2,'03')");
+        conn.createStatement().execute("UPSERT INTO " + fullTableName + " VALUES ('org1',1,'02')");
+        conn.commit();
+
+        try (Statement stmt = conn.createStatement()) {
+            // Even though SCORE is descending, the > comparison makes sense logically
+            // and doesn't have to be reversed as RVC expression comparisons do (which
+            // is really just a bug - see PHOENIX-3383).
+            final ResultSet rs = stmt.executeQuery("SELECT entity_id, score\n" + 
+                    "FROM " + fullTableName + "\n" + 
+                    "WHERE organization_id = 'org1'\n" + 
+                    "AND score > 2.0\n" + 
+                    "ORDER BY score DESC\n" + 
+                    "LIMIT 3");
+            assertTrue(rs.next());
+            assertEquals("01", rs.getString(1));
+            assertEquals(3.0, rs.getDouble(2), 0.001);
+            assertFalse(rs.next());
+        }
+    }
+
+    @Test
+    public void testMutationBatch() throws Exception {
+        Properties connectionProperties = new Properties();
+        connectionProperties.setProperty(QueryServices.MUTATE_BATCH_SIZE_ATTRIB, "10");
+        connectionProperties.setProperty(QueryServices.MUTATE_BATCH_SIZE_BYTES_ATTRIB, "128");
+        PhoenixConnection connection = (PhoenixConnection) DriverManager.getConnection(getUrl(), connectionProperties);
+        String fullTableName = generateUniqueName();
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute("CREATE TABLE " + fullTableName + "(\n" +
+                "    ORGANIZATION_ID CHAR(15) NOT NULL,\n" +
+                "    SCORE DOUBLE NOT NULL,\n" +
+                "    ENTITY_ID CHAR(15) NOT NULL\n" +
+                "    CONSTRAINT PAGE_SNAPSHOT_PK PRIMARY KEY (\n" +
+                "        ORGANIZATION_ID,\n" +
+                "        SCORE DESC,\n" +
+                "        ENTITY_ID DESC\n" +
+                "    )\n" +
+                ") MULTI_TENANT=TRUE");
+        }
+        upsertRows(connection, fullTableName);
+        connection.commit();
+        assertEquals(2L, connection.getMutationState().getBatchCount());
+        
+        // set the batch size (rows) to 1 
+        connectionProperties.setProperty(QueryServices.MUTATE_BATCH_SIZE_ATTRIB, "1");
+        connectionProperties.setProperty(QueryServices.MUTATE_BATCH_SIZE_BYTES_ATTRIB, "128");
+        connection = (PhoenixConnection) DriverManager.getConnection(getUrl(), connectionProperties);
+        upsertRows(connection, fullTableName);
+        connection.commit();
+        // each row should be in its own batch
+        assertEquals(4L, connection.getMutationState().getBatchCount());
+    }
+    
+    @Test
+    public void testMaxMutationSize() throws Exception {
+        Properties connectionProperties = new Properties();
+        connectionProperties.setProperty(QueryServices.MAX_MUTATION_SIZE_ATTRIB, "3");
+        connectionProperties.setProperty(QueryServices.MAX_MUTATION_SIZE_BYTES_ATTRIB, "1000000");
+        PhoenixConnection connection = (PhoenixConnection) DriverManager.getConnection(getUrl(), connectionProperties);
+        String fullTableName = generateUniqueName();
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute("CREATE TABLE " + fullTableName + "(\n" +
+                "    ORGANIZATION_ID CHAR(15) NOT NULL,\n" +
+                "    SCORE DOUBLE NOT NULL,\n" +
+                "    ENTITY_ID CHAR(15) NOT NULL\n" +
+                "    CONSTRAINT PAGE_SNAPSHOT_PK PRIMARY KEY (\n" +
+                "        ORGANIZATION_ID,\n" +
+                "        SCORE DESC,\n" +
+                "        ENTITY_ID DESC\n" +
+                "    )\n" +
+                ") MULTI_TENANT=TRUE");
+        }
+        try {
+            upsertRows(connection, fullTableName);
+            fail();
+        }
+        catch(SQLException e) {
+            assertEquals(SQLExceptionCode.MAX_MUTATION_SIZE_EXCEEDED.getErrorCode(), e.getErrorCode());
+        }
+        
+        // set the max mutation size (bytes) to a low value
+        connectionProperties.setProperty(QueryServices.MAX_MUTATION_SIZE_ATTRIB, "1000");
+        connectionProperties.setProperty(QueryServices.MAX_MUTATION_SIZE_BYTES_ATTRIB, "4");
+        connection = (PhoenixConnection) DriverManager.getConnection(getUrl(), connectionProperties);
+        try {
+            upsertRows(connection, fullTableName);
+            fail();
+        }
+        catch(SQLException e) {
+            assertEquals(SQLExceptionCode.MAX_MUTATION_SIZE_BYTES_EXCEEDED.getErrorCode(), e.getErrorCode());
+        }
+    }
+
+    private void upsertRows(PhoenixConnection conn, String fullTableName) throws SQLException {
+        PreparedStatement stmt = conn.prepareStatement("upsert into " + fullTableName +
+                " (organization_id, entity_id, score) values (?,?,?)");
+        for (int i = 0; i < 4; i++) {
+            stmt.setString(1, "AAAA" + i);
+            stmt.setString(2, "BBBB" + i);
+            stmt.setInt(3, 1);
+            stmt.execute();
         }
     }
 }

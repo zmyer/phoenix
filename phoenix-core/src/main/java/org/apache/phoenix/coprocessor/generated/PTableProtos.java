@@ -269,6 +269,16 @@ public final class PTableProtos {
      * <code>optional bool isDynamic = 14;</code>
      */
     boolean getIsDynamic();
+
+    // optional bytes columnQualifierBytes = 15;
+    /**
+     * <code>optional bytes columnQualifierBytes = 15;</code>
+     */
+    boolean hasColumnQualifierBytes();
+    /**
+     * <code>optional bytes columnQualifierBytes = 15;</code>
+     */
+    com.google.protobuf.ByteString getColumnQualifierBytes();
   }
   /**
    * Protobuf type {@code PColumn}
@@ -389,6 +399,11 @@ public final class PTableProtos {
             case 112: {
               bitField0_ |= 0x00002000;
               isDynamic_ = input.readBool();
+              break;
+            }
+            case 122: {
+              bitField0_ |= 0x00004000;
+              columnQualifierBytes_ = input.readBytes();
               break;
             }
           }
@@ -709,6 +724,22 @@ public final class PTableProtos {
       return isDynamic_;
     }
 
+    // optional bytes columnQualifierBytes = 15;
+    public static final int COLUMNQUALIFIERBYTES_FIELD_NUMBER = 15;
+    private com.google.protobuf.ByteString columnQualifierBytes_;
+    /**
+     * <code>optional bytes columnQualifierBytes = 15;</code>
+     */
+    public boolean hasColumnQualifierBytes() {
+      return ((bitField0_ & 0x00004000) == 0x00004000);
+    }
+    /**
+     * <code>optional bytes columnQualifierBytes = 15;</code>
+     */
+    public com.google.protobuf.ByteString getColumnQualifierBytes() {
+      return columnQualifierBytes_;
+    }
+
     private void initFields() {
       columnNameBytes_ = com.google.protobuf.ByteString.EMPTY;
       familyNameBytes_ = com.google.protobuf.ByteString.EMPTY;
@@ -724,6 +755,7 @@ public final class PTableProtos {
       expression_ = "";
       isRowTimestamp_ = false;
       isDynamic_ = false;
+      columnQualifierBytes_ = com.google.protobuf.ByteString.EMPTY;
     }
     private byte memoizedIsInitialized = -1;
     public final boolean isInitialized() {
@@ -799,6 +831,9 @@ public final class PTableProtos {
       if (((bitField0_ & 0x00002000) == 0x00002000)) {
         output.writeBool(14, isDynamic_);
       }
+      if (((bitField0_ & 0x00004000) == 0x00004000)) {
+        output.writeBytes(15, columnQualifierBytes_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -863,6 +898,10 @@ public final class PTableProtos {
       if (((bitField0_ & 0x00002000) == 0x00002000)) {
         size += com.google.protobuf.CodedOutputStream
           .computeBoolSize(14, isDynamic_);
+      }
+      if (((bitField0_ & 0x00004000) == 0x00004000)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(15, columnQualifierBytes_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSerializedSize = size;
@@ -957,6 +996,11 @@ public final class PTableProtos {
         result = result && (getIsDynamic()
             == other.getIsDynamic());
       }
+      result = result && (hasColumnQualifierBytes() == other.hasColumnQualifierBytes());
+      if (hasColumnQualifierBytes()) {
+        result = result && getColumnQualifierBytes()
+            .equals(other.getColumnQualifierBytes());
+      }
       result = result &&
           getUnknownFields().equals(other.getUnknownFields());
       return result;
@@ -1025,6 +1069,10 @@ public final class PTableProtos {
       if (hasIsDynamic()) {
         hash = (37 * hash) + ISDYNAMIC_FIELD_NUMBER;
         hash = (53 * hash) + hashBoolean(getIsDynamic());
+      }
+      if (hasColumnQualifierBytes()) {
+        hash = (37 * hash) + COLUMNQUALIFIERBYTES_FIELD_NUMBER;
+        hash = (53 * hash) + getColumnQualifierBytes().hashCode();
       }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
@@ -1163,6 +1211,8 @@ public final class PTableProtos {
         bitField0_ = (bitField0_ & ~0x00001000);
         isDynamic_ = false;
         bitField0_ = (bitField0_ & ~0x00002000);
+        columnQualifierBytes_ = com.google.protobuf.ByteString.EMPTY;
+        bitField0_ = (bitField0_ & ~0x00004000);
         return this;
       }
 
@@ -1247,6 +1297,10 @@ public final class PTableProtos {
           to_bitField0_ |= 0x00002000;
         }
         result.isDynamic_ = isDynamic_;
+        if (((from_bitField0_ & 0x00004000) == 0x00004000)) {
+          to_bitField0_ |= 0x00004000;
+        }
+        result.columnQualifierBytes_ = columnQualifierBytes_;
         result.bitField0_ = to_bitField0_;
         onBuilt();
         return result;
@@ -1308,6 +1362,9 @@ public final class PTableProtos {
         }
         if (other.hasIsDynamic()) {
           setIsDynamic(other.getIsDynamic());
+        }
+        if (other.hasColumnQualifierBytes()) {
+          setColumnQualifierBytes(other.getColumnQualifierBytes());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         return this;
@@ -1905,6 +1962,42 @@ public final class PTableProtos {
       public Builder clearIsDynamic() {
         bitField0_ = (bitField0_ & ~0x00002000);
         isDynamic_ = false;
+        onChanged();
+        return this;
+      }
+
+      // optional bytes columnQualifierBytes = 15;
+      private com.google.protobuf.ByteString columnQualifierBytes_ = com.google.protobuf.ByteString.EMPTY;
+      /**
+       * <code>optional bytes columnQualifierBytes = 15;</code>
+       */
+      public boolean hasColumnQualifierBytes() {
+        return ((bitField0_ & 0x00004000) == 0x00004000);
+      }
+      /**
+       * <code>optional bytes columnQualifierBytes = 15;</code>
+       */
+      public com.google.protobuf.ByteString getColumnQualifierBytes() {
+        return columnQualifierBytes_;
+      }
+      /**
+       * <code>optional bytes columnQualifierBytes = 15;</code>
+       */
+      public Builder setColumnQualifierBytes(com.google.protobuf.ByteString value) {
+        if (value == null) {
+    throw new NullPointerException();
+  }
+  bitField0_ |= 0x00004000;
+        columnQualifierBytes_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional bytes columnQualifierBytes = 15;</code>
+       */
+      public Builder clearColumnQualifierBytes() {
+        bitField0_ = (bitField0_ & ~0x00004000);
+        columnQualifierBytes_ = getDefaultInstance().getColumnQualifierBytes();
         onChanged();
         return this;
       }
@@ -3140,38 +3233,27 @@ public final class PTableProtos {
      */
     boolean getIsImmutableRows();
 
-    // repeated .PTableStats guidePosts = 12;
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats> 
-        getGuidePostsList();
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats getGuidePosts(int index);
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    int getGuidePostsCount();
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    java.util.List<? extends org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder> 
-        getGuidePostsOrBuilderList();
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder getGuidePostsOrBuilder(
-        int index);
-
     // optional bytes dataTableNameBytes = 13;
     /**
      * <code>optional bytes dataTableNameBytes = 13;</code>
+     *
+     * <pre>
+     * Do NOT reuse the tag '12'. Stats are no longer passed
+     * along with the PTable.
+     *repeated PTableStats guidePosts = 12;
+     * TODO remove this field in 5.0 release
+     * </pre>
      */
     boolean hasDataTableNameBytes();
     /**
      * <code>optional bytes dataTableNameBytes = 13;</code>
+     *
+     * <pre>
+     * Do NOT reuse the tag '12'. Stats are no longer passed
+     * along with the PTable.
+     *repeated PTableStats guidePosts = 12;
+     * TODO remove this field in 5.0 release
+     * </pre>
      */
     com.google.protobuf.ByteString getDataTableNameBytes();
 
@@ -3348,6 +3430,96 @@ public final class PTableProtos {
      * <code>optional bool isNamespaceMapped = 30;</code>
      */
     boolean getIsNamespaceMapped();
+
+    // optional string autoParititonSeqName = 31;
+    /**
+     * <code>optional string autoParititonSeqName = 31;</code>
+     */
+    boolean hasAutoParititonSeqName();
+    /**
+     * <code>optional string autoParititonSeqName = 31;</code>
+     */
+    java.lang.String getAutoParititonSeqName();
+    /**
+     * <code>optional string autoParititonSeqName = 31;</code>
+     */
+    com.google.protobuf.ByteString
+        getAutoParititonSeqNameBytes();
+
+    // optional bool isAppendOnlySchema = 32;
+    /**
+     * <code>optional bool isAppendOnlySchema = 32;</code>
+     */
+    boolean hasIsAppendOnlySchema();
+    /**
+     * <code>optional bool isAppendOnlySchema = 32;</code>
+     */
+    boolean getIsAppendOnlySchema();
+
+    // optional bytes parentNameBytes = 33;
+    /**
+     * <code>optional bytes parentNameBytes = 33;</code>
+     */
+    boolean hasParentNameBytes();
+    /**
+     * <code>optional bytes parentNameBytes = 33;</code>
+     */
+    com.google.protobuf.ByteString getParentNameBytes();
+
+    // optional bytes storageScheme = 34;
+    /**
+     * <code>optional bytes storageScheme = 34;</code>
+     */
+    boolean hasStorageScheme();
+    /**
+     * <code>optional bytes storageScheme = 34;</code>
+     */
+    com.google.protobuf.ByteString getStorageScheme();
+
+    // optional bytes encodingScheme = 35;
+    /**
+     * <code>optional bytes encodingScheme = 35;</code>
+     */
+    boolean hasEncodingScheme();
+    /**
+     * <code>optional bytes encodingScheme = 35;</code>
+     */
+    com.google.protobuf.ByteString getEncodingScheme();
+
+    // repeated .EncodedCQCounter encodedCQCounters = 36;
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter> 
+        getEncodedCQCountersList();
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter getEncodedCQCounters(int index);
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    int getEncodedCQCountersCount();
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    java.util.List<? extends org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder> 
+        getEncodedCQCountersOrBuilderList();
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder getEncodedCQCountersOrBuilder(
+        int index);
+
+    // optional bool useStatsForParallelization = 37;
+    /**
+     * <code>optional bool useStatsForParallelization = 37;</code>
+     */
+    boolean hasUseStatsForParallelization();
+    /**
+     * <code>optional bool useStatsForParallelization = 37;</code>
+     */
+    boolean getUseStatsForParallelization();
   }
   /**
    * Protobuf type {@code PTable}
@@ -3383,6 +3555,7 @@ public final class PTableProtos {
         throws com.google.protobuf.InvalidProtocolBufferException {
       initFields();
       int mutable_bitField0_ = 0;
+      int mutable_bitField1_ = 0;
       com.google.protobuf.UnknownFieldSet.Builder unknownFields =
           com.google.protobuf.UnknownFieldSet.newBuilder();
       try {
@@ -3467,14 +3640,6 @@ public final class PTableProtos {
               isImmutableRows_ = input.readBool();
               break;
             }
-            case 98: {
-              if (!((mutable_bitField0_ & 0x00000800) == 0x00000800)) {
-                guidePosts_ = new java.util.ArrayList<org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats>();
-                mutable_bitField0_ |= 0x00000800;
-              }
-              guidePosts_.add(input.readMessage(org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.PARSER, extensionRegistry));
-              break;
-            }
             case 106: {
               bitField0_ |= 0x00000200;
               dataTableNameBytes_ = input.readBytes();
@@ -3506,9 +3671,9 @@ public final class PTableProtos {
               break;
             }
             case 154: {
-              if (!((mutable_bitField0_ & 0x00040000) == 0x00040000)) {
+              if (!((mutable_bitField0_ & 0x00020000) == 0x00020000)) {
                 physicalNames_ = new java.util.ArrayList<com.google.protobuf.ByteString>();
-                mutable_bitField0_ |= 0x00040000;
+                mutable_bitField0_ |= 0x00020000;
               }
               physicalNames_.add(input.readBytes());
               break;
@@ -3568,6 +3733,44 @@ public final class PTableProtos {
               isNamespaceMapped_ = input.readBool();
               break;
             }
+            case 250: {
+              bitField0_ |= 0x04000000;
+              autoParititonSeqName_ = input.readBytes();
+              break;
+            }
+            case 256: {
+              bitField0_ |= 0x08000000;
+              isAppendOnlySchema_ = input.readBool();
+              break;
+            }
+            case 266: {
+              bitField0_ |= 0x10000000;
+              parentNameBytes_ = input.readBytes();
+              break;
+            }
+            case 274: {
+              bitField0_ |= 0x20000000;
+              storageScheme_ = input.readBytes();
+              break;
+            }
+            case 282: {
+              bitField0_ |= 0x40000000;
+              encodingScheme_ = input.readBytes();
+              break;
+            }
+            case 290: {
+              if (!((mutable_bitField1_ & 0x00000004) == 0x00000004)) {
+                encodedCQCounters_ = new java.util.ArrayList<org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter>();
+                mutable_bitField1_ |= 0x00000004;
+              }
+              encodedCQCounters_.add(input.readMessage(org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.PARSER, extensionRegistry));
+              break;
+            }
+            case 296: {
+              bitField0_ |= 0x80000000;
+              useStatsForParallelization_ = input.readBool();
+              break;
+            }
           }
         }
       } catch (com.google.protobuf.InvalidProtocolBufferException e) {
@@ -3582,11 +3785,11 @@ public final class PTableProtos {
         if (((mutable_bitField0_ & 0x00000200) == 0x00000200)) {
           indexes_ = java.util.Collections.unmodifiableList(indexes_);
         }
-        if (((mutable_bitField0_ & 0x00000800) == 0x00000800)) {
-          guidePosts_ = java.util.Collections.unmodifiableList(guidePosts_);
-        }
-        if (((mutable_bitField0_ & 0x00040000) == 0x00040000)) {
+        if (((mutable_bitField0_ & 0x00020000) == 0x00020000)) {
           physicalNames_ = java.util.Collections.unmodifiableList(physicalNames_);
+        }
+        if (((mutable_bitField1_ & 0x00000004) == 0x00000004)) {
+          encodedCQCounters_ = java.util.Collections.unmodifiableList(encodedCQCounters_);
         }
         this.unknownFields = unknownFields.build();
         makeExtensionsImmutable();
@@ -3863,53 +4066,31 @@ public final class PTableProtos {
       return isImmutableRows_;
     }
 
-    // repeated .PTableStats guidePosts = 12;
-    public static final int GUIDEPOSTS_FIELD_NUMBER = 12;
-    private java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats> guidePosts_;
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    public java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats> getGuidePostsList() {
-      return guidePosts_;
-    }
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    public java.util.List<? extends org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder> 
-        getGuidePostsOrBuilderList() {
-      return guidePosts_;
-    }
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    public int getGuidePostsCount() {
-      return guidePosts_.size();
-    }
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    public org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats getGuidePosts(int index) {
-      return guidePosts_.get(index);
-    }
-    /**
-     * <code>repeated .PTableStats guidePosts = 12;</code>
-     */
-    public org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder getGuidePostsOrBuilder(
-        int index) {
-      return guidePosts_.get(index);
-    }
-
     // optional bytes dataTableNameBytes = 13;
     public static final int DATATABLENAMEBYTES_FIELD_NUMBER = 13;
     private com.google.protobuf.ByteString dataTableNameBytes_;
     /**
      * <code>optional bytes dataTableNameBytes = 13;</code>
+     *
+     * <pre>
+     * Do NOT reuse the tag '12'. Stats are no longer passed
+     * along with the PTable.
+     *repeated PTableStats guidePosts = 12;
+     * TODO remove this field in 5.0 release
+     * </pre>
      */
     public boolean hasDataTableNameBytes() {
       return ((bitField0_ & 0x00000200) == 0x00000200);
     }
     /**
      * <code>optional bytes dataTableNameBytes = 13;</code>
+     *
+     * <pre>
+     * Do NOT reuse the tag '12'. Stats are no longer passed
+     * along with the PTable.
+     *repeated PTableStats guidePosts = 12;
+     * TODO remove this field in 5.0 release
+     * </pre>
      */
     public com.google.protobuf.ByteString getDataTableNameBytes() {
       return dataTableNameBytes_;
@@ -4194,6 +4375,165 @@ public final class PTableProtos {
       return isNamespaceMapped_;
     }
 
+    // optional string autoParititonSeqName = 31;
+    public static final int AUTOPARITITONSEQNAME_FIELD_NUMBER = 31;
+    private java.lang.Object autoParititonSeqName_;
+    /**
+     * <code>optional string autoParititonSeqName = 31;</code>
+     */
+    public boolean hasAutoParititonSeqName() {
+      return ((bitField0_ & 0x04000000) == 0x04000000);
+    }
+    /**
+     * <code>optional string autoParititonSeqName = 31;</code>
+     */
+    public java.lang.String getAutoParititonSeqName() {
+      java.lang.Object ref = autoParititonSeqName_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        if (bs.isValidUtf8()) {
+          autoParititonSeqName_ = s;
+        }
+        return s;
+      }
+    }
+    /**
+     * <code>optional string autoParititonSeqName = 31;</code>
+     */
+    public com.google.protobuf.ByteString
+        getAutoParititonSeqNameBytes() {
+      java.lang.Object ref = autoParititonSeqName_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        autoParititonSeqName_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    // optional bool isAppendOnlySchema = 32;
+    public static final int ISAPPENDONLYSCHEMA_FIELD_NUMBER = 32;
+    private boolean isAppendOnlySchema_;
+    /**
+     * <code>optional bool isAppendOnlySchema = 32;</code>
+     */
+    public boolean hasIsAppendOnlySchema() {
+      return ((bitField0_ & 0x08000000) == 0x08000000);
+    }
+    /**
+     * <code>optional bool isAppendOnlySchema = 32;</code>
+     */
+    public boolean getIsAppendOnlySchema() {
+      return isAppendOnlySchema_;
+    }
+
+    // optional bytes parentNameBytes = 33;
+    public static final int PARENTNAMEBYTES_FIELD_NUMBER = 33;
+    private com.google.protobuf.ByteString parentNameBytes_;
+    /**
+     * <code>optional bytes parentNameBytes = 33;</code>
+     */
+    public boolean hasParentNameBytes() {
+      return ((bitField0_ & 0x10000000) == 0x10000000);
+    }
+    /**
+     * <code>optional bytes parentNameBytes = 33;</code>
+     */
+    public com.google.protobuf.ByteString getParentNameBytes() {
+      return parentNameBytes_;
+    }
+
+    // optional bytes storageScheme = 34;
+    public static final int STORAGESCHEME_FIELD_NUMBER = 34;
+    private com.google.protobuf.ByteString storageScheme_;
+    /**
+     * <code>optional bytes storageScheme = 34;</code>
+     */
+    public boolean hasStorageScheme() {
+      return ((bitField0_ & 0x20000000) == 0x20000000);
+    }
+    /**
+     * <code>optional bytes storageScheme = 34;</code>
+     */
+    public com.google.protobuf.ByteString getStorageScheme() {
+      return storageScheme_;
+    }
+
+    // optional bytes encodingScheme = 35;
+    public static final int ENCODINGSCHEME_FIELD_NUMBER = 35;
+    private com.google.protobuf.ByteString encodingScheme_;
+    /**
+     * <code>optional bytes encodingScheme = 35;</code>
+     */
+    public boolean hasEncodingScheme() {
+      return ((bitField0_ & 0x40000000) == 0x40000000);
+    }
+    /**
+     * <code>optional bytes encodingScheme = 35;</code>
+     */
+    public com.google.protobuf.ByteString getEncodingScheme() {
+      return encodingScheme_;
+    }
+
+    // repeated .EncodedCQCounter encodedCQCounters = 36;
+    public static final int ENCODEDCQCOUNTERS_FIELD_NUMBER = 36;
+    private java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter> encodedCQCounters_;
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    public java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter> getEncodedCQCountersList() {
+      return encodedCQCounters_;
+    }
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    public java.util.List<? extends org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder> 
+        getEncodedCQCountersOrBuilderList() {
+      return encodedCQCounters_;
+    }
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    public int getEncodedCQCountersCount() {
+      return encodedCQCounters_.size();
+    }
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter getEncodedCQCounters(int index) {
+      return encodedCQCounters_.get(index);
+    }
+    /**
+     * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+     */
+    public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder getEncodedCQCountersOrBuilder(
+        int index) {
+      return encodedCQCounters_.get(index);
+    }
+
+    // optional bool useStatsForParallelization = 37;
+    public static final int USESTATSFORPARALLELIZATION_FIELD_NUMBER = 37;
+    private boolean useStatsForParallelization_;
+    /**
+     * <code>optional bool useStatsForParallelization = 37;</code>
+     */
+    public boolean hasUseStatsForParallelization() {
+      return ((bitField0_ & 0x80000000) == 0x80000000);
+    }
+    /**
+     * <code>optional bool useStatsForParallelization = 37;</code>
+     */
+    public boolean getUseStatsForParallelization() {
+      return useStatsForParallelization_;
+    }
+
     private void initFields() {
       schemaNameBytes_ = com.google.protobuf.ByteString.EMPTY;
       tableNameBytes_ = com.google.protobuf.ByteString.EMPTY;
@@ -4206,7 +4546,6 @@ public final class PTableProtos {
       columns_ = java.util.Collections.emptyList();
       indexes_ = java.util.Collections.emptyList();
       isImmutableRows_ = false;
-      guidePosts_ = java.util.Collections.emptyList();
       dataTableNameBytes_ = com.google.protobuf.ByteString.EMPTY;
       defaultFamilyName_ = com.google.protobuf.ByteString.EMPTY;
       disableWAL_ = false;
@@ -4225,6 +4564,13 @@ public final class PTableProtos {
       updateCacheFrequency_ = 0L;
       indexDisableTimestamp_ = 0L;
       isNamespaceMapped_ = false;
+      autoParititonSeqName_ = "";
+      isAppendOnlySchema_ = false;
+      parentNameBytes_ = com.google.protobuf.ByteString.EMPTY;
+      storageScheme_ = com.google.protobuf.ByteString.EMPTY;
+      encodingScheme_ = com.google.protobuf.ByteString.EMPTY;
+      encodedCQCounters_ = java.util.Collections.emptyList();
+      useStatsForParallelization_ = false;
     }
     private byte memoizedIsInitialized = -1;
     public final boolean isInitialized() {
@@ -4279,8 +4625,8 @@ public final class PTableProtos {
           return false;
         }
       }
-      for (int i = 0; i < getGuidePostsCount(); i++) {
-        if (!getGuidePosts(i).isInitialized()) {
+      for (int i = 0; i < getEncodedCQCountersCount(); i++) {
+        if (!getEncodedCQCounters(i).isInitialized()) {
           memoizedIsInitialized = 0;
           return false;
         }
@@ -4324,9 +4670,6 @@ public final class PTableProtos {
       }
       if (((bitField0_ & 0x00000100) == 0x00000100)) {
         output.writeBool(11, isImmutableRows_);
-      }
-      for (int i = 0; i < guidePosts_.size(); i++) {
-        output.writeMessage(12, guidePosts_.get(i));
       }
       if (((bitField0_ & 0x00000200) == 0x00000200)) {
         output.writeBytes(13, dataTableNameBytes_);
@@ -4382,6 +4725,27 @@ public final class PTableProtos {
       if (((bitField0_ & 0x02000000) == 0x02000000)) {
         output.writeBool(30, isNamespaceMapped_);
       }
+      if (((bitField0_ & 0x04000000) == 0x04000000)) {
+        output.writeBytes(31, getAutoParititonSeqNameBytes());
+      }
+      if (((bitField0_ & 0x08000000) == 0x08000000)) {
+        output.writeBool(32, isAppendOnlySchema_);
+      }
+      if (((bitField0_ & 0x10000000) == 0x10000000)) {
+        output.writeBytes(33, parentNameBytes_);
+      }
+      if (((bitField0_ & 0x20000000) == 0x20000000)) {
+        output.writeBytes(34, storageScheme_);
+      }
+      if (((bitField0_ & 0x40000000) == 0x40000000)) {
+        output.writeBytes(35, encodingScheme_);
+      }
+      for (int i = 0; i < encodedCQCounters_.size(); i++) {
+        output.writeMessage(36, encodedCQCounters_.get(i));
+      }
+      if (((bitField0_ & 0x80000000) == 0x80000000)) {
+        output.writeBool(37, useStatsForParallelization_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -4434,10 +4798,6 @@ public final class PTableProtos {
       if (((bitField0_ & 0x00000100) == 0x00000100)) {
         size += com.google.protobuf.CodedOutputStream
           .computeBoolSize(11, isImmutableRows_);
-      }
-      for (int i = 0; i < guidePosts_.size(); i++) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(12, guidePosts_.get(i));
       }
       if (((bitField0_ & 0x00000200) == 0x00000200)) {
         size += com.google.protobuf.CodedOutputStream
@@ -4516,6 +4876,34 @@ public final class PTableProtos {
         size += com.google.protobuf.CodedOutputStream
           .computeBoolSize(30, isNamespaceMapped_);
       }
+      if (((bitField0_ & 0x04000000) == 0x04000000)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(31, getAutoParititonSeqNameBytes());
+      }
+      if (((bitField0_ & 0x08000000) == 0x08000000)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBoolSize(32, isAppendOnlySchema_);
+      }
+      if (((bitField0_ & 0x10000000) == 0x10000000)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(33, parentNameBytes_);
+      }
+      if (((bitField0_ & 0x20000000) == 0x20000000)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(34, storageScheme_);
+      }
+      if (((bitField0_ & 0x40000000) == 0x40000000)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(35, encodingScheme_);
+      }
+      for (int i = 0; i < encodedCQCounters_.size(); i++) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(36, encodedCQCounters_.get(i));
+      }
+      if (((bitField0_ & 0x80000000) == 0x80000000)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBoolSize(37, useStatsForParallelization_);
+      }
       size += getUnknownFields().getSerializedSize();
       memoizedSerializedSize = size;
       return size;
@@ -4588,8 +4976,6 @@ public final class PTableProtos {
         result = result && (getIsImmutableRows()
             == other.getIsImmutableRows());
       }
-      result = result && getGuidePostsList()
-          .equals(other.getGuidePostsList());
       result = result && (hasDataTableNameBytes() == other.hasDataTableNameBytes());
       if (hasDataTableNameBytes()) {
         result = result && getDataTableNameBytes()
@@ -4677,6 +5063,38 @@ public final class PTableProtos {
         result = result && (getIsNamespaceMapped()
             == other.getIsNamespaceMapped());
       }
+      result = result && (hasAutoParititonSeqName() == other.hasAutoParititonSeqName());
+      if (hasAutoParititonSeqName()) {
+        result = result && getAutoParititonSeqName()
+            .equals(other.getAutoParititonSeqName());
+      }
+      result = result && (hasIsAppendOnlySchema() == other.hasIsAppendOnlySchema());
+      if (hasIsAppendOnlySchema()) {
+        result = result && (getIsAppendOnlySchema()
+            == other.getIsAppendOnlySchema());
+      }
+      result = result && (hasParentNameBytes() == other.hasParentNameBytes());
+      if (hasParentNameBytes()) {
+        result = result && getParentNameBytes()
+            .equals(other.getParentNameBytes());
+      }
+      result = result && (hasStorageScheme() == other.hasStorageScheme());
+      if (hasStorageScheme()) {
+        result = result && getStorageScheme()
+            .equals(other.getStorageScheme());
+      }
+      result = result && (hasEncodingScheme() == other.hasEncodingScheme());
+      if (hasEncodingScheme()) {
+        result = result && getEncodingScheme()
+            .equals(other.getEncodingScheme());
+      }
+      result = result && getEncodedCQCountersList()
+          .equals(other.getEncodedCQCountersList());
+      result = result && (hasUseStatsForParallelization() == other.hasUseStatsForParallelization());
+      if (hasUseStatsForParallelization()) {
+        result = result && (getUseStatsForParallelization()
+            == other.getUseStatsForParallelization());
+      }
       result = result &&
           getUnknownFields().equals(other.getUnknownFields());
       return result;
@@ -4733,10 +5151,6 @@ public final class PTableProtos {
       if (hasIsImmutableRows()) {
         hash = (37 * hash) + ISIMMUTABLEROWS_FIELD_NUMBER;
         hash = (53 * hash) + hashBoolean(getIsImmutableRows());
-      }
-      if (getGuidePostsCount() > 0) {
-        hash = (37 * hash) + GUIDEPOSTS_FIELD_NUMBER;
-        hash = (53 * hash) + getGuidePostsList().hashCode();
       }
       if (hasDataTableNameBytes()) {
         hash = (37 * hash) + DATATABLENAMEBYTES_FIELD_NUMBER;
@@ -4809,6 +5223,34 @@ public final class PTableProtos {
       if (hasIsNamespaceMapped()) {
         hash = (37 * hash) + ISNAMESPACEMAPPED_FIELD_NUMBER;
         hash = (53 * hash) + hashBoolean(getIsNamespaceMapped());
+      }
+      if (hasAutoParititonSeqName()) {
+        hash = (37 * hash) + AUTOPARITITONSEQNAME_FIELD_NUMBER;
+        hash = (53 * hash) + getAutoParititonSeqName().hashCode();
+      }
+      if (hasIsAppendOnlySchema()) {
+        hash = (37 * hash) + ISAPPENDONLYSCHEMA_FIELD_NUMBER;
+        hash = (53 * hash) + hashBoolean(getIsAppendOnlySchema());
+      }
+      if (hasParentNameBytes()) {
+        hash = (37 * hash) + PARENTNAMEBYTES_FIELD_NUMBER;
+        hash = (53 * hash) + getParentNameBytes().hashCode();
+      }
+      if (hasStorageScheme()) {
+        hash = (37 * hash) + STORAGESCHEME_FIELD_NUMBER;
+        hash = (53 * hash) + getStorageScheme().hashCode();
+      }
+      if (hasEncodingScheme()) {
+        hash = (37 * hash) + ENCODINGSCHEME_FIELD_NUMBER;
+        hash = (53 * hash) + getEncodingScheme().hashCode();
+      }
+      if (getEncodedCQCountersCount() > 0) {
+        hash = (37 * hash) + ENCODEDCQCOUNTERS_FIELD_NUMBER;
+        hash = (53 * hash) + getEncodedCQCountersList().hashCode();
+      }
+      if (hasUseStatsForParallelization()) {
+        hash = (37 * hash) + USESTATSFORPARALLELIZATION_FIELD_NUMBER;
+        hash = (53 * hash) + hashBoolean(getUseStatsForParallelization());
       }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
@@ -4913,7 +5355,7 @@ public final class PTableProtos {
         if (com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders) {
           getColumnsFieldBuilder();
           getIndexesFieldBuilder();
-          getGuidePostsFieldBuilder();
+          getEncodedCQCountersFieldBuilder();
         }
       }
       private static Builder create() {
@@ -4952,48 +5394,60 @@ public final class PTableProtos {
         }
         isImmutableRows_ = false;
         bitField0_ = (bitField0_ & ~0x00000400);
-        if (guidePostsBuilder_ == null) {
-          guidePosts_ = java.util.Collections.emptyList();
-          bitField0_ = (bitField0_ & ~0x00000800);
-        } else {
-          guidePostsBuilder_.clear();
-        }
         dataTableNameBytes_ = com.google.protobuf.ByteString.EMPTY;
-        bitField0_ = (bitField0_ & ~0x00001000);
+        bitField0_ = (bitField0_ & ~0x00000800);
         defaultFamilyName_ = com.google.protobuf.ByteString.EMPTY;
-        bitField0_ = (bitField0_ & ~0x00002000);
+        bitField0_ = (bitField0_ & ~0x00001000);
         disableWAL_ = false;
-        bitField0_ = (bitField0_ & ~0x00004000);
+        bitField0_ = (bitField0_ & ~0x00002000);
         multiTenant_ = false;
-        bitField0_ = (bitField0_ & ~0x00008000);
+        bitField0_ = (bitField0_ & ~0x00004000);
         viewType_ = com.google.protobuf.ByteString.EMPTY;
-        bitField0_ = (bitField0_ & ~0x00010000);
+        bitField0_ = (bitField0_ & ~0x00008000);
         viewStatement_ = com.google.protobuf.ByteString.EMPTY;
-        bitField0_ = (bitField0_ & ~0x00020000);
+        bitField0_ = (bitField0_ & ~0x00010000);
         physicalNames_ = java.util.Collections.emptyList();
-        bitField0_ = (bitField0_ & ~0x00040000);
+        bitField0_ = (bitField0_ & ~0x00020000);
         tenantId_ = com.google.protobuf.ByteString.EMPTY;
-        bitField0_ = (bitField0_ & ~0x00080000);
+        bitField0_ = (bitField0_ & ~0x00040000);
         viewIndexId_ = 0;
-        bitField0_ = (bitField0_ & ~0x00100000);
+        bitField0_ = (bitField0_ & ~0x00080000);
         indexType_ = com.google.protobuf.ByteString.EMPTY;
-        bitField0_ = (bitField0_ & ~0x00200000);
+        bitField0_ = (bitField0_ & ~0x00100000);
         statsTimeStamp_ = 0L;
-        bitField0_ = (bitField0_ & ~0x00400000);
+        bitField0_ = (bitField0_ & ~0x00200000);
         storeNulls_ = false;
-        bitField0_ = (bitField0_ & ~0x00800000);
+        bitField0_ = (bitField0_ & ~0x00400000);
         baseColumnCount_ = 0;
-        bitField0_ = (bitField0_ & ~0x01000000);
+        bitField0_ = (bitField0_ & ~0x00800000);
         rowKeyOrderOptimizable_ = false;
-        bitField0_ = (bitField0_ & ~0x02000000);
+        bitField0_ = (bitField0_ & ~0x01000000);
         transactional_ = false;
-        bitField0_ = (bitField0_ & ~0x04000000);
+        bitField0_ = (bitField0_ & ~0x02000000);
         updateCacheFrequency_ = 0L;
-        bitField0_ = (bitField0_ & ~0x08000000);
+        bitField0_ = (bitField0_ & ~0x04000000);
         indexDisableTimestamp_ = 0L;
-        bitField0_ = (bitField0_ & ~0x10000000);
+        bitField0_ = (bitField0_ & ~0x08000000);
         isNamespaceMapped_ = false;
+        bitField0_ = (bitField0_ & ~0x10000000);
+        autoParititonSeqName_ = "";
         bitField0_ = (bitField0_ & ~0x20000000);
+        isAppendOnlySchema_ = false;
+        bitField0_ = (bitField0_ & ~0x40000000);
+        parentNameBytes_ = com.google.protobuf.ByteString.EMPTY;
+        bitField0_ = (bitField0_ & ~0x80000000);
+        storageScheme_ = com.google.protobuf.ByteString.EMPTY;
+        bitField1_ = (bitField1_ & ~0x00000001);
+        encodingScheme_ = com.google.protobuf.ByteString.EMPTY;
+        bitField1_ = (bitField1_ & ~0x00000002);
+        if (encodedCQCountersBuilder_ == null) {
+          encodedCQCounters_ = java.util.Collections.emptyList();
+          bitField1_ = (bitField1_ & ~0x00000004);
+        } else {
+          encodedCQCountersBuilder_.clear();
+        }
+        useStatsForParallelization_ = false;
+        bitField1_ = (bitField1_ & ~0x00000008);
         return this;
       }
 
@@ -5021,6 +5475,7 @@ public final class PTableProtos {
       public org.apache.phoenix.coprocessor.generated.PTableProtos.PTable buildPartial() {
         org.apache.phoenix.coprocessor.generated.PTableProtos.PTable result = new org.apache.phoenix.coprocessor.generated.PTableProtos.PTable(this);
         int from_bitField0_ = bitField0_;
+        int from_bitField1_ = bitField1_;
         int to_bitField0_ = 0;
         if (((from_bitField0_ & 0x00000001) == 0x00000001)) {
           to_bitField0_ |= 0x00000001;
@@ -5076,88 +5531,112 @@ public final class PTableProtos {
           to_bitField0_ |= 0x00000100;
         }
         result.isImmutableRows_ = isImmutableRows_;
-        if (guidePostsBuilder_ == null) {
-          if (((bitField0_ & 0x00000800) == 0x00000800)) {
-            guidePosts_ = java.util.Collections.unmodifiableList(guidePosts_);
-            bitField0_ = (bitField0_ & ~0x00000800);
-          }
-          result.guidePosts_ = guidePosts_;
-        } else {
-          result.guidePosts_ = guidePostsBuilder_.build();
-        }
-        if (((from_bitField0_ & 0x00001000) == 0x00001000)) {
+        if (((from_bitField0_ & 0x00000800) == 0x00000800)) {
           to_bitField0_ |= 0x00000200;
         }
         result.dataTableNameBytes_ = dataTableNameBytes_;
-        if (((from_bitField0_ & 0x00002000) == 0x00002000)) {
+        if (((from_bitField0_ & 0x00001000) == 0x00001000)) {
           to_bitField0_ |= 0x00000400;
         }
         result.defaultFamilyName_ = defaultFamilyName_;
-        if (((from_bitField0_ & 0x00004000) == 0x00004000)) {
+        if (((from_bitField0_ & 0x00002000) == 0x00002000)) {
           to_bitField0_ |= 0x00000800;
         }
         result.disableWAL_ = disableWAL_;
-        if (((from_bitField0_ & 0x00008000) == 0x00008000)) {
+        if (((from_bitField0_ & 0x00004000) == 0x00004000)) {
           to_bitField0_ |= 0x00001000;
         }
         result.multiTenant_ = multiTenant_;
-        if (((from_bitField0_ & 0x00010000) == 0x00010000)) {
+        if (((from_bitField0_ & 0x00008000) == 0x00008000)) {
           to_bitField0_ |= 0x00002000;
         }
         result.viewType_ = viewType_;
-        if (((from_bitField0_ & 0x00020000) == 0x00020000)) {
+        if (((from_bitField0_ & 0x00010000) == 0x00010000)) {
           to_bitField0_ |= 0x00004000;
         }
         result.viewStatement_ = viewStatement_;
-        if (((bitField0_ & 0x00040000) == 0x00040000)) {
+        if (((bitField0_ & 0x00020000) == 0x00020000)) {
           physicalNames_ = java.util.Collections.unmodifiableList(physicalNames_);
-          bitField0_ = (bitField0_ & ~0x00040000);
+          bitField0_ = (bitField0_ & ~0x00020000);
         }
         result.physicalNames_ = physicalNames_;
-        if (((from_bitField0_ & 0x00080000) == 0x00080000)) {
+        if (((from_bitField0_ & 0x00040000) == 0x00040000)) {
           to_bitField0_ |= 0x00008000;
         }
         result.tenantId_ = tenantId_;
-        if (((from_bitField0_ & 0x00100000) == 0x00100000)) {
+        if (((from_bitField0_ & 0x00080000) == 0x00080000)) {
           to_bitField0_ |= 0x00010000;
         }
         result.viewIndexId_ = viewIndexId_;
-        if (((from_bitField0_ & 0x00200000) == 0x00200000)) {
+        if (((from_bitField0_ & 0x00100000) == 0x00100000)) {
           to_bitField0_ |= 0x00020000;
         }
         result.indexType_ = indexType_;
-        if (((from_bitField0_ & 0x00400000) == 0x00400000)) {
+        if (((from_bitField0_ & 0x00200000) == 0x00200000)) {
           to_bitField0_ |= 0x00040000;
         }
         result.statsTimeStamp_ = statsTimeStamp_;
-        if (((from_bitField0_ & 0x00800000) == 0x00800000)) {
+        if (((from_bitField0_ & 0x00400000) == 0x00400000)) {
           to_bitField0_ |= 0x00080000;
         }
         result.storeNulls_ = storeNulls_;
-        if (((from_bitField0_ & 0x01000000) == 0x01000000)) {
+        if (((from_bitField0_ & 0x00800000) == 0x00800000)) {
           to_bitField0_ |= 0x00100000;
         }
         result.baseColumnCount_ = baseColumnCount_;
-        if (((from_bitField0_ & 0x02000000) == 0x02000000)) {
+        if (((from_bitField0_ & 0x01000000) == 0x01000000)) {
           to_bitField0_ |= 0x00200000;
         }
         result.rowKeyOrderOptimizable_ = rowKeyOrderOptimizable_;
-        if (((from_bitField0_ & 0x04000000) == 0x04000000)) {
+        if (((from_bitField0_ & 0x02000000) == 0x02000000)) {
           to_bitField0_ |= 0x00400000;
         }
         result.transactional_ = transactional_;
-        if (((from_bitField0_ & 0x08000000) == 0x08000000)) {
+        if (((from_bitField0_ & 0x04000000) == 0x04000000)) {
           to_bitField0_ |= 0x00800000;
         }
         result.updateCacheFrequency_ = updateCacheFrequency_;
-        if (((from_bitField0_ & 0x10000000) == 0x10000000)) {
+        if (((from_bitField0_ & 0x08000000) == 0x08000000)) {
           to_bitField0_ |= 0x01000000;
         }
         result.indexDisableTimestamp_ = indexDisableTimestamp_;
-        if (((from_bitField0_ & 0x20000000) == 0x20000000)) {
+        if (((from_bitField0_ & 0x10000000) == 0x10000000)) {
           to_bitField0_ |= 0x02000000;
         }
         result.isNamespaceMapped_ = isNamespaceMapped_;
+        if (((from_bitField0_ & 0x20000000) == 0x20000000)) {
+          to_bitField0_ |= 0x04000000;
+        }
+        result.autoParititonSeqName_ = autoParititonSeqName_;
+        if (((from_bitField0_ & 0x40000000) == 0x40000000)) {
+          to_bitField0_ |= 0x08000000;
+        }
+        result.isAppendOnlySchema_ = isAppendOnlySchema_;
+        if (((from_bitField0_ & 0x80000000) == 0x80000000)) {
+          to_bitField0_ |= 0x10000000;
+        }
+        result.parentNameBytes_ = parentNameBytes_;
+        if (((from_bitField1_ & 0x00000001) == 0x00000001)) {
+          to_bitField0_ |= 0x20000000;
+        }
+        result.storageScheme_ = storageScheme_;
+        if (((from_bitField1_ & 0x00000002) == 0x00000002)) {
+          to_bitField0_ |= 0x40000000;
+        }
+        result.encodingScheme_ = encodingScheme_;
+        if (encodedCQCountersBuilder_ == null) {
+          if (((bitField1_ & 0x00000004) == 0x00000004)) {
+            encodedCQCounters_ = java.util.Collections.unmodifiableList(encodedCQCounters_);
+            bitField1_ = (bitField1_ & ~0x00000004);
+          }
+          result.encodedCQCounters_ = encodedCQCounters_;
+        } else {
+          result.encodedCQCounters_ = encodedCQCountersBuilder_.build();
+        }
+        if (((from_bitField1_ & 0x00000008) == 0x00000008)) {
+          to_bitField0_ |= 0x80000000;
+        }
+        result.useStatsForParallelization_ = useStatsForParallelization_;
         result.bitField0_ = to_bitField0_;
         onBuilt();
         return result;
@@ -5255,32 +5734,6 @@ public final class PTableProtos {
         if (other.hasIsImmutableRows()) {
           setIsImmutableRows(other.getIsImmutableRows());
         }
-        if (guidePostsBuilder_ == null) {
-          if (!other.guidePosts_.isEmpty()) {
-            if (guidePosts_.isEmpty()) {
-              guidePosts_ = other.guidePosts_;
-              bitField0_ = (bitField0_ & ~0x00000800);
-            } else {
-              ensureGuidePostsIsMutable();
-              guidePosts_.addAll(other.guidePosts_);
-            }
-            onChanged();
-          }
-        } else {
-          if (!other.guidePosts_.isEmpty()) {
-            if (guidePostsBuilder_.isEmpty()) {
-              guidePostsBuilder_.dispose();
-              guidePostsBuilder_ = null;
-              guidePosts_ = other.guidePosts_;
-              bitField0_ = (bitField0_ & ~0x00000800);
-              guidePostsBuilder_ = 
-                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
-                   getGuidePostsFieldBuilder() : null;
-            } else {
-              guidePostsBuilder_.addAllMessages(other.guidePosts_);
-            }
-          }
-        }
         if (other.hasDataTableNameBytes()) {
           setDataTableNameBytes(other.getDataTableNameBytes());
         }
@@ -5302,7 +5755,7 @@ public final class PTableProtos {
         if (!other.physicalNames_.isEmpty()) {
           if (physicalNames_.isEmpty()) {
             physicalNames_ = other.physicalNames_;
-            bitField0_ = (bitField0_ & ~0x00040000);
+            bitField0_ = (bitField0_ & ~0x00020000);
           } else {
             ensurePhysicalNamesIsMutable();
             physicalNames_.addAll(other.physicalNames_);
@@ -5341,6 +5794,52 @@ public final class PTableProtos {
         }
         if (other.hasIsNamespaceMapped()) {
           setIsNamespaceMapped(other.getIsNamespaceMapped());
+        }
+        if (other.hasAutoParititonSeqName()) {
+          bitField0_ |= 0x20000000;
+          autoParititonSeqName_ = other.autoParititonSeqName_;
+          onChanged();
+        }
+        if (other.hasIsAppendOnlySchema()) {
+          setIsAppendOnlySchema(other.getIsAppendOnlySchema());
+        }
+        if (other.hasParentNameBytes()) {
+          setParentNameBytes(other.getParentNameBytes());
+        }
+        if (other.hasStorageScheme()) {
+          setStorageScheme(other.getStorageScheme());
+        }
+        if (other.hasEncodingScheme()) {
+          setEncodingScheme(other.getEncodingScheme());
+        }
+        if (encodedCQCountersBuilder_ == null) {
+          if (!other.encodedCQCounters_.isEmpty()) {
+            if (encodedCQCounters_.isEmpty()) {
+              encodedCQCounters_ = other.encodedCQCounters_;
+              bitField1_ = (bitField1_ & ~0x00000004);
+            } else {
+              ensureEncodedCQCountersIsMutable();
+              encodedCQCounters_.addAll(other.encodedCQCounters_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.encodedCQCounters_.isEmpty()) {
+            if (encodedCQCountersBuilder_.isEmpty()) {
+              encodedCQCountersBuilder_.dispose();
+              encodedCQCountersBuilder_ = null;
+              encodedCQCounters_ = other.encodedCQCounters_;
+              bitField1_ = (bitField1_ & ~0x00000004);
+              encodedCQCountersBuilder_ = 
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   getEncodedCQCountersFieldBuilder() : null;
+            } else {
+              encodedCQCountersBuilder_.addAllMessages(other.encodedCQCounters_);
+            }
+          }
+        }
+        if (other.hasUseStatsForParallelization()) {
+          setUseStatsForParallelization(other.getUseStatsForParallelization());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         return this;
@@ -5395,8 +5894,8 @@ public final class PTableProtos {
             return false;
           }
         }
-        for (int i = 0; i < getGuidePostsCount(); i++) {
-          if (!getGuidePosts(i).isInitialized()) {
+        for (int i = 0; i < getEncodedCQCountersCount(); i++) {
+          if (!getEncodedCQCounters(i).isInitialized()) {
             
             return false;
           }
@@ -5422,6 +5921,7 @@ public final class PTableProtos {
         return this;
       }
       private int bitField0_;
+      private int bitField1_;
 
       // required bytes schemaNameBytes = 1;
       private com.google.protobuf.ByteString schemaNameBytes_ = com.google.protobuf.ByteString.EMPTY;
@@ -6253,277 +6753,65 @@ public final class PTableProtos {
         return this;
       }
 
-      // repeated .PTableStats guidePosts = 12;
-      private java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats> guidePosts_ =
-        java.util.Collections.emptyList();
-      private void ensureGuidePostsIsMutable() {
-        if (!((bitField0_ & 0x00000800) == 0x00000800)) {
-          guidePosts_ = new java.util.ArrayList<org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats>(guidePosts_);
-          bitField0_ |= 0x00000800;
-         }
-      }
-
-      private com.google.protobuf.RepeatedFieldBuilder<
-          org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder> guidePostsBuilder_;
-
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats> getGuidePostsList() {
-        if (guidePostsBuilder_ == null) {
-          return java.util.Collections.unmodifiableList(guidePosts_);
-        } else {
-          return guidePostsBuilder_.getMessageList();
-        }
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public int getGuidePostsCount() {
-        if (guidePostsBuilder_ == null) {
-          return guidePosts_.size();
-        } else {
-          return guidePostsBuilder_.getCount();
-        }
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats getGuidePosts(int index) {
-        if (guidePostsBuilder_ == null) {
-          return guidePosts_.get(index);
-        } else {
-          return guidePostsBuilder_.getMessage(index);
-        }
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder setGuidePosts(
-          int index, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats value) {
-        if (guidePostsBuilder_ == null) {
-          if (value == null) {
-            throw new NullPointerException();
-          }
-          ensureGuidePostsIsMutable();
-          guidePosts_.set(index, value);
-          onChanged();
-        } else {
-          guidePostsBuilder_.setMessage(index, value);
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder setGuidePosts(
-          int index, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder builderForValue) {
-        if (guidePostsBuilder_ == null) {
-          ensureGuidePostsIsMutable();
-          guidePosts_.set(index, builderForValue.build());
-          onChanged();
-        } else {
-          guidePostsBuilder_.setMessage(index, builderForValue.build());
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder addGuidePosts(org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats value) {
-        if (guidePostsBuilder_ == null) {
-          if (value == null) {
-            throw new NullPointerException();
-          }
-          ensureGuidePostsIsMutable();
-          guidePosts_.add(value);
-          onChanged();
-        } else {
-          guidePostsBuilder_.addMessage(value);
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder addGuidePosts(
-          int index, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats value) {
-        if (guidePostsBuilder_ == null) {
-          if (value == null) {
-            throw new NullPointerException();
-          }
-          ensureGuidePostsIsMutable();
-          guidePosts_.add(index, value);
-          onChanged();
-        } else {
-          guidePostsBuilder_.addMessage(index, value);
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder addGuidePosts(
-          org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder builderForValue) {
-        if (guidePostsBuilder_ == null) {
-          ensureGuidePostsIsMutable();
-          guidePosts_.add(builderForValue.build());
-          onChanged();
-        } else {
-          guidePostsBuilder_.addMessage(builderForValue.build());
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder addGuidePosts(
-          int index, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder builderForValue) {
-        if (guidePostsBuilder_ == null) {
-          ensureGuidePostsIsMutable();
-          guidePosts_.add(index, builderForValue.build());
-          onChanged();
-        } else {
-          guidePostsBuilder_.addMessage(index, builderForValue.build());
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder addAllGuidePosts(
-          java.lang.Iterable<? extends org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats> values) {
-        if (guidePostsBuilder_ == null) {
-          ensureGuidePostsIsMutable();
-          super.addAll(values, guidePosts_);
-          onChanged();
-        } else {
-          guidePostsBuilder_.addAllMessages(values);
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder clearGuidePosts() {
-        if (guidePostsBuilder_ == null) {
-          guidePosts_ = java.util.Collections.emptyList();
-          bitField0_ = (bitField0_ & ~0x00000800);
-          onChanged();
-        } else {
-          guidePostsBuilder_.clear();
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public Builder removeGuidePosts(int index) {
-        if (guidePostsBuilder_ == null) {
-          ensureGuidePostsIsMutable();
-          guidePosts_.remove(index);
-          onChanged();
-        } else {
-          guidePostsBuilder_.remove(index);
-        }
-        return this;
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder getGuidePostsBuilder(
-          int index) {
-        return getGuidePostsFieldBuilder().getBuilder(index);
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder getGuidePostsOrBuilder(
-          int index) {
-        if (guidePostsBuilder_ == null) {
-          return guidePosts_.get(index);  } else {
-          return guidePostsBuilder_.getMessageOrBuilder(index);
-        }
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public java.util.List<? extends org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder> 
-           getGuidePostsOrBuilderList() {
-        if (guidePostsBuilder_ != null) {
-          return guidePostsBuilder_.getMessageOrBuilderList();
-        } else {
-          return java.util.Collections.unmodifiableList(guidePosts_);
-        }
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder addGuidePostsBuilder() {
-        return getGuidePostsFieldBuilder().addBuilder(
-            org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.getDefaultInstance());
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder addGuidePostsBuilder(
-          int index) {
-        return getGuidePostsFieldBuilder().addBuilder(
-            index, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.getDefaultInstance());
-      }
-      /**
-       * <code>repeated .PTableStats guidePosts = 12;</code>
-       */
-      public java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder> 
-           getGuidePostsBuilderList() {
-        return getGuidePostsFieldBuilder().getBuilderList();
-      }
-      private com.google.protobuf.RepeatedFieldBuilder<
-          org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder> 
-          getGuidePostsFieldBuilder() {
-        if (guidePostsBuilder_ == null) {
-          guidePostsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
-              org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStats.Builder, org.apache.phoenix.coprocessor.generated.PTableProtos.PTableStatsOrBuilder>(
-                  guidePosts_,
-                  ((bitField0_ & 0x00000800) == 0x00000800),
-                  getParentForChildren(),
-                  isClean());
-          guidePosts_ = null;
-        }
-        return guidePostsBuilder_;
-      }
-
       // optional bytes dataTableNameBytes = 13;
       private com.google.protobuf.ByteString dataTableNameBytes_ = com.google.protobuf.ByteString.EMPTY;
       /**
        * <code>optional bytes dataTableNameBytes = 13;</code>
+       *
+       * <pre>
+       * Do NOT reuse the tag '12'. Stats are no longer passed
+       * along with the PTable.
+       *repeated PTableStats guidePosts = 12;
+       * TODO remove this field in 5.0 release
+       * </pre>
        */
       public boolean hasDataTableNameBytes() {
-        return ((bitField0_ & 0x00001000) == 0x00001000);
+        return ((bitField0_ & 0x00000800) == 0x00000800);
       }
       /**
        * <code>optional bytes dataTableNameBytes = 13;</code>
+       *
+       * <pre>
+       * Do NOT reuse the tag '12'. Stats are no longer passed
+       * along with the PTable.
+       *repeated PTableStats guidePosts = 12;
+       * TODO remove this field in 5.0 release
+       * </pre>
        */
       public com.google.protobuf.ByteString getDataTableNameBytes() {
         return dataTableNameBytes_;
       }
       /**
        * <code>optional bytes dataTableNameBytes = 13;</code>
+       *
+       * <pre>
+       * Do NOT reuse the tag '12'. Stats are no longer passed
+       * along with the PTable.
+       *repeated PTableStats guidePosts = 12;
+       * TODO remove this field in 5.0 release
+       * </pre>
        */
       public Builder setDataTableNameBytes(com.google.protobuf.ByteString value) {
         if (value == null) {
     throw new NullPointerException();
   }
-  bitField0_ |= 0x00001000;
+  bitField0_ |= 0x00000800;
         dataTableNameBytes_ = value;
         onChanged();
         return this;
       }
       /**
        * <code>optional bytes dataTableNameBytes = 13;</code>
+       *
+       * <pre>
+       * Do NOT reuse the tag '12'. Stats are no longer passed
+       * along with the PTable.
+       *repeated PTableStats guidePosts = 12;
+       * TODO remove this field in 5.0 release
+       * </pre>
        */
       public Builder clearDataTableNameBytes() {
-        bitField0_ = (bitField0_ & ~0x00001000);
+        bitField0_ = (bitField0_ & ~0x00000800);
         dataTableNameBytes_ = getDefaultInstance().getDataTableNameBytes();
         onChanged();
         return this;
@@ -6535,7 +6823,7 @@ public final class PTableProtos {
        * <code>optional bytes defaultFamilyName = 14;</code>
        */
       public boolean hasDefaultFamilyName() {
-        return ((bitField0_ & 0x00002000) == 0x00002000);
+        return ((bitField0_ & 0x00001000) == 0x00001000);
       }
       /**
        * <code>optional bytes defaultFamilyName = 14;</code>
@@ -6550,7 +6838,7 @@ public final class PTableProtos {
         if (value == null) {
     throw new NullPointerException();
   }
-  bitField0_ |= 0x00002000;
+  bitField0_ |= 0x00001000;
         defaultFamilyName_ = value;
         onChanged();
         return this;
@@ -6559,7 +6847,7 @@ public final class PTableProtos {
        * <code>optional bytes defaultFamilyName = 14;</code>
        */
       public Builder clearDefaultFamilyName() {
-        bitField0_ = (bitField0_ & ~0x00002000);
+        bitField0_ = (bitField0_ & ~0x00001000);
         defaultFamilyName_ = getDefaultInstance().getDefaultFamilyName();
         onChanged();
         return this;
@@ -6571,7 +6859,7 @@ public final class PTableProtos {
        * <code>required bool disableWAL = 15;</code>
        */
       public boolean hasDisableWAL() {
-        return ((bitField0_ & 0x00004000) == 0x00004000);
+        return ((bitField0_ & 0x00002000) == 0x00002000);
       }
       /**
        * <code>required bool disableWAL = 15;</code>
@@ -6583,7 +6871,7 @@ public final class PTableProtos {
        * <code>required bool disableWAL = 15;</code>
        */
       public Builder setDisableWAL(boolean value) {
-        bitField0_ |= 0x00004000;
+        bitField0_ |= 0x00002000;
         disableWAL_ = value;
         onChanged();
         return this;
@@ -6592,7 +6880,7 @@ public final class PTableProtos {
        * <code>required bool disableWAL = 15;</code>
        */
       public Builder clearDisableWAL() {
-        bitField0_ = (bitField0_ & ~0x00004000);
+        bitField0_ = (bitField0_ & ~0x00002000);
         disableWAL_ = false;
         onChanged();
         return this;
@@ -6604,7 +6892,7 @@ public final class PTableProtos {
        * <code>required bool multiTenant = 16;</code>
        */
       public boolean hasMultiTenant() {
-        return ((bitField0_ & 0x00008000) == 0x00008000);
+        return ((bitField0_ & 0x00004000) == 0x00004000);
       }
       /**
        * <code>required bool multiTenant = 16;</code>
@@ -6616,7 +6904,7 @@ public final class PTableProtos {
        * <code>required bool multiTenant = 16;</code>
        */
       public Builder setMultiTenant(boolean value) {
-        bitField0_ |= 0x00008000;
+        bitField0_ |= 0x00004000;
         multiTenant_ = value;
         onChanged();
         return this;
@@ -6625,7 +6913,7 @@ public final class PTableProtos {
        * <code>required bool multiTenant = 16;</code>
        */
       public Builder clearMultiTenant() {
-        bitField0_ = (bitField0_ & ~0x00008000);
+        bitField0_ = (bitField0_ & ~0x00004000);
         multiTenant_ = false;
         onChanged();
         return this;
@@ -6637,7 +6925,7 @@ public final class PTableProtos {
        * <code>optional bytes viewType = 17;</code>
        */
       public boolean hasViewType() {
-        return ((bitField0_ & 0x00010000) == 0x00010000);
+        return ((bitField0_ & 0x00008000) == 0x00008000);
       }
       /**
        * <code>optional bytes viewType = 17;</code>
@@ -6652,7 +6940,7 @@ public final class PTableProtos {
         if (value == null) {
     throw new NullPointerException();
   }
-  bitField0_ |= 0x00010000;
+  bitField0_ |= 0x00008000;
         viewType_ = value;
         onChanged();
         return this;
@@ -6661,7 +6949,7 @@ public final class PTableProtos {
        * <code>optional bytes viewType = 17;</code>
        */
       public Builder clearViewType() {
-        bitField0_ = (bitField0_ & ~0x00010000);
+        bitField0_ = (bitField0_ & ~0x00008000);
         viewType_ = getDefaultInstance().getViewType();
         onChanged();
         return this;
@@ -6673,7 +6961,7 @@ public final class PTableProtos {
        * <code>optional bytes viewStatement = 18;</code>
        */
       public boolean hasViewStatement() {
-        return ((bitField0_ & 0x00020000) == 0x00020000);
+        return ((bitField0_ & 0x00010000) == 0x00010000);
       }
       /**
        * <code>optional bytes viewStatement = 18;</code>
@@ -6688,7 +6976,7 @@ public final class PTableProtos {
         if (value == null) {
     throw new NullPointerException();
   }
-  bitField0_ |= 0x00020000;
+  bitField0_ |= 0x00010000;
         viewStatement_ = value;
         onChanged();
         return this;
@@ -6697,7 +6985,7 @@ public final class PTableProtos {
        * <code>optional bytes viewStatement = 18;</code>
        */
       public Builder clearViewStatement() {
-        bitField0_ = (bitField0_ & ~0x00020000);
+        bitField0_ = (bitField0_ & ~0x00010000);
         viewStatement_ = getDefaultInstance().getViewStatement();
         onChanged();
         return this;
@@ -6706,9 +6994,9 @@ public final class PTableProtos {
       // repeated bytes physicalNames = 19;
       private java.util.List<com.google.protobuf.ByteString> physicalNames_ = java.util.Collections.emptyList();
       private void ensurePhysicalNamesIsMutable() {
-        if (!((bitField0_ & 0x00040000) == 0x00040000)) {
+        if (!((bitField0_ & 0x00020000) == 0x00020000)) {
           physicalNames_ = new java.util.ArrayList<com.google.protobuf.ByteString>(physicalNames_);
-          bitField0_ |= 0x00040000;
+          bitField0_ |= 0x00020000;
          }
       }
       /**
@@ -6770,7 +7058,7 @@ public final class PTableProtos {
        */
       public Builder clearPhysicalNames() {
         physicalNames_ = java.util.Collections.emptyList();
-        bitField0_ = (bitField0_ & ~0x00040000);
+        bitField0_ = (bitField0_ & ~0x00020000);
         onChanged();
         return this;
       }
@@ -6781,7 +7069,7 @@ public final class PTableProtos {
        * <code>optional bytes tenantId = 20;</code>
        */
       public boolean hasTenantId() {
-        return ((bitField0_ & 0x00080000) == 0x00080000);
+        return ((bitField0_ & 0x00040000) == 0x00040000);
       }
       /**
        * <code>optional bytes tenantId = 20;</code>
@@ -6796,7 +7084,7 @@ public final class PTableProtos {
         if (value == null) {
     throw new NullPointerException();
   }
-  bitField0_ |= 0x00080000;
+  bitField0_ |= 0x00040000;
         tenantId_ = value;
         onChanged();
         return this;
@@ -6805,7 +7093,7 @@ public final class PTableProtos {
        * <code>optional bytes tenantId = 20;</code>
        */
       public Builder clearTenantId() {
-        bitField0_ = (bitField0_ & ~0x00080000);
+        bitField0_ = (bitField0_ & ~0x00040000);
         tenantId_ = getDefaultInstance().getTenantId();
         onChanged();
         return this;
@@ -6817,7 +7105,7 @@ public final class PTableProtos {
        * <code>optional int32 viewIndexId = 21;</code>
        */
       public boolean hasViewIndexId() {
-        return ((bitField0_ & 0x00100000) == 0x00100000);
+        return ((bitField0_ & 0x00080000) == 0x00080000);
       }
       /**
        * <code>optional int32 viewIndexId = 21;</code>
@@ -6829,7 +7117,7 @@ public final class PTableProtos {
        * <code>optional int32 viewIndexId = 21;</code>
        */
       public Builder setViewIndexId(int value) {
-        bitField0_ |= 0x00100000;
+        bitField0_ |= 0x00080000;
         viewIndexId_ = value;
         onChanged();
         return this;
@@ -6838,7 +7126,7 @@ public final class PTableProtos {
        * <code>optional int32 viewIndexId = 21;</code>
        */
       public Builder clearViewIndexId() {
-        bitField0_ = (bitField0_ & ~0x00100000);
+        bitField0_ = (bitField0_ & ~0x00080000);
         viewIndexId_ = 0;
         onChanged();
         return this;
@@ -6850,7 +7138,7 @@ public final class PTableProtos {
        * <code>optional bytes indexType = 22;</code>
        */
       public boolean hasIndexType() {
-        return ((bitField0_ & 0x00200000) == 0x00200000);
+        return ((bitField0_ & 0x00100000) == 0x00100000);
       }
       /**
        * <code>optional bytes indexType = 22;</code>
@@ -6865,7 +7153,7 @@ public final class PTableProtos {
         if (value == null) {
     throw new NullPointerException();
   }
-  bitField0_ |= 0x00200000;
+  bitField0_ |= 0x00100000;
         indexType_ = value;
         onChanged();
         return this;
@@ -6874,7 +7162,7 @@ public final class PTableProtos {
        * <code>optional bytes indexType = 22;</code>
        */
       public Builder clearIndexType() {
-        bitField0_ = (bitField0_ & ~0x00200000);
+        bitField0_ = (bitField0_ & ~0x00100000);
         indexType_ = getDefaultInstance().getIndexType();
         onChanged();
         return this;
@@ -6886,7 +7174,7 @@ public final class PTableProtos {
        * <code>optional int64 statsTimeStamp = 23;</code>
        */
       public boolean hasStatsTimeStamp() {
-        return ((bitField0_ & 0x00400000) == 0x00400000);
+        return ((bitField0_ & 0x00200000) == 0x00200000);
       }
       /**
        * <code>optional int64 statsTimeStamp = 23;</code>
@@ -6898,7 +7186,7 @@ public final class PTableProtos {
        * <code>optional int64 statsTimeStamp = 23;</code>
        */
       public Builder setStatsTimeStamp(long value) {
-        bitField0_ |= 0x00400000;
+        bitField0_ |= 0x00200000;
         statsTimeStamp_ = value;
         onChanged();
         return this;
@@ -6907,7 +7195,7 @@ public final class PTableProtos {
        * <code>optional int64 statsTimeStamp = 23;</code>
        */
       public Builder clearStatsTimeStamp() {
-        bitField0_ = (bitField0_ & ~0x00400000);
+        bitField0_ = (bitField0_ & ~0x00200000);
         statsTimeStamp_ = 0L;
         onChanged();
         return this;
@@ -6919,7 +7207,7 @@ public final class PTableProtos {
        * <code>optional bool storeNulls = 24;</code>
        */
       public boolean hasStoreNulls() {
-        return ((bitField0_ & 0x00800000) == 0x00800000);
+        return ((bitField0_ & 0x00400000) == 0x00400000);
       }
       /**
        * <code>optional bool storeNulls = 24;</code>
@@ -6931,7 +7219,7 @@ public final class PTableProtos {
        * <code>optional bool storeNulls = 24;</code>
        */
       public Builder setStoreNulls(boolean value) {
-        bitField0_ |= 0x00800000;
+        bitField0_ |= 0x00400000;
         storeNulls_ = value;
         onChanged();
         return this;
@@ -6940,7 +7228,7 @@ public final class PTableProtos {
        * <code>optional bool storeNulls = 24;</code>
        */
       public Builder clearStoreNulls() {
-        bitField0_ = (bitField0_ & ~0x00800000);
+        bitField0_ = (bitField0_ & ~0x00400000);
         storeNulls_ = false;
         onChanged();
         return this;
@@ -6952,7 +7240,7 @@ public final class PTableProtos {
        * <code>optional int32 baseColumnCount = 25;</code>
        */
       public boolean hasBaseColumnCount() {
-        return ((bitField0_ & 0x01000000) == 0x01000000);
+        return ((bitField0_ & 0x00800000) == 0x00800000);
       }
       /**
        * <code>optional int32 baseColumnCount = 25;</code>
@@ -6964,7 +7252,7 @@ public final class PTableProtos {
        * <code>optional int32 baseColumnCount = 25;</code>
        */
       public Builder setBaseColumnCount(int value) {
-        bitField0_ |= 0x01000000;
+        bitField0_ |= 0x00800000;
         baseColumnCount_ = value;
         onChanged();
         return this;
@@ -6973,7 +7261,7 @@ public final class PTableProtos {
        * <code>optional int32 baseColumnCount = 25;</code>
        */
       public Builder clearBaseColumnCount() {
-        bitField0_ = (bitField0_ & ~0x01000000);
+        bitField0_ = (bitField0_ & ~0x00800000);
         baseColumnCount_ = 0;
         onChanged();
         return this;
@@ -6985,7 +7273,7 @@ public final class PTableProtos {
        * <code>optional bool rowKeyOrderOptimizable = 26;</code>
        */
       public boolean hasRowKeyOrderOptimizable() {
-        return ((bitField0_ & 0x02000000) == 0x02000000);
+        return ((bitField0_ & 0x01000000) == 0x01000000);
       }
       /**
        * <code>optional bool rowKeyOrderOptimizable = 26;</code>
@@ -6997,7 +7285,7 @@ public final class PTableProtos {
        * <code>optional bool rowKeyOrderOptimizable = 26;</code>
        */
       public Builder setRowKeyOrderOptimizable(boolean value) {
-        bitField0_ |= 0x02000000;
+        bitField0_ |= 0x01000000;
         rowKeyOrderOptimizable_ = value;
         onChanged();
         return this;
@@ -7006,7 +7294,7 @@ public final class PTableProtos {
        * <code>optional bool rowKeyOrderOptimizable = 26;</code>
        */
       public Builder clearRowKeyOrderOptimizable() {
-        bitField0_ = (bitField0_ & ~0x02000000);
+        bitField0_ = (bitField0_ & ~0x01000000);
         rowKeyOrderOptimizable_ = false;
         onChanged();
         return this;
@@ -7018,7 +7306,7 @@ public final class PTableProtos {
        * <code>optional bool transactional = 27;</code>
        */
       public boolean hasTransactional() {
-        return ((bitField0_ & 0x04000000) == 0x04000000);
+        return ((bitField0_ & 0x02000000) == 0x02000000);
       }
       /**
        * <code>optional bool transactional = 27;</code>
@@ -7030,7 +7318,7 @@ public final class PTableProtos {
        * <code>optional bool transactional = 27;</code>
        */
       public Builder setTransactional(boolean value) {
-        bitField0_ |= 0x04000000;
+        bitField0_ |= 0x02000000;
         transactional_ = value;
         onChanged();
         return this;
@@ -7039,7 +7327,7 @@ public final class PTableProtos {
        * <code>optional bool transactional = 27;</code>
        */
       public Builder clearTransactional() {
-        bitField0_ = (bitField0_ & ~0x04000000);
+        bitField0_ = (bitField0_ & ~0x02000000);
         transactional_ = false;
         onChanged();
         return this;
@@ -7051,7 +7339,7 @@ public final class PTableProtos {
        * <code>optional int64 updateCacheFrequency = 28;</code>
        */
       public boolean hasUpdateCacheFrequency() {
-        return ((bitField0_ & 0x08000000) == 0x08000000);
+        return ((bitField0_ & 0x04000000) == 0x04000000);
       }
       /**
        * <code>optional int64 updateCacheFrequency = 28;</code>
@@ -7063,7 +7351,7 @@ public final class PTableProtos {
        * <code>optional int64 updateCacheFrequency = 28;</code>
        */
       public Builder setUpdateCacheFrequency(long value) {
-        bitField0_ |= 0x08000000;
+        bitField0_ |= 0x04000000;
         updateCacheFrequency_ = value;
         onChanged();
         return this;
@@ -7072,7 +7360,7 @@ public final class PTableProtos {
        * <code>optional int64 updateCacheFrequency = 28;</code>
        */
       public Builder clearUpdateCacheFrequency() {
-        bitField0_ = (bitField0_ & ~0x08000000);
+        bitField0_ = (bitField0_ & ~0x04000000);
         updateCacheFrequency_ = 0L;
         onChanged();
         return this;
@@ -7084,7 +7372,7 @@ public final class PTableProtos {
        * <code>optional int64 indexDisableTimestamp = 29;</code>
        */
       public boolean hasIndexDisableTimestamp() {
-        return ((bitField0_ & 0x10000000) == 0x10000000);
+        return ((bitField0_ & 0x08000000) == 0x08000000);
       }
       /**
        * <code>optional int64 indexDisableTimestamp = 29;</code>
@@ -7096,7 +7384,7 @@ public final class PTableProtos {
        * <code>optional int64 indexDisableTimestamp = 29;</code>
        */
       public Builder setIndexDisableTimestamp(long value) {
-        bitField0_ |= 0x10000000;
+        bitField0_ |= 0x08000000;
         indexDisableTimestamp_ = value;
         onChanged();
         return this;
@@ -7105,7 +7393,7 @@ public final class PTableProtos {
        * <code>optional int64 indexDisableTimestamp = 29;</code>
        */
       public Builder clearIndexDisableTimestamp() {
-        bitField0_ = (bitField0_ & ~0x10000000);
+        bitField0_ = (bitField0_ & ~0x08000000);
         indexDisableTimestamp_ = 0L;
         onChanged();
         return this;
@@ -7117,7 +7405,7 @@ public final class PTableProtos {
        * <code>optional bool isNamespaceMapped = 30;</code>
        */
       public boolean hasIsNamespaceMapped() {
-        return ((bitField0_ & 0x20000000) == 0x20000000);
+        return ((bitField0_ & 0x10000000) == 0x10000000);
       }
       /**
        * <code>optional bool isNamespaceMapped = 30;</code>
@@ -7129,7 +7417,7 @@ public final class PTableProtos {
        * <code>optional bool isNamespaceMapped = 30;</code>
        */
       public Builder setIsNamespaceMapped(boolean value) {
-        bitField0_ |= 0x20000000;
+        bitField0_ |= 0x10000000;
         isNamespaceMapped_ = value;
         onChanged();
         return this;
@@ -7138,8 +7426,496 @@ public final class PTableProtos {
        * <code>optional bool isNamespaceMapped = 30;</code>
        */
       public Builder clearIsNamespaceMapped() {
-        bitField0_ = (bitField0_ & ~0x20000000);
+        bitField0_ = (bitField0_ & ~0x10000000);
         isNamespaceMapped_ = false;
+        onChanged();
+        return this;
+      }
+
+      // optional string autoParititonSeqName = 31;
+      private java.lang.Object autoParititonSeqName_ = "";
+      /**
+       * <code>optional string autoParititonSeqName = 31;</code>
+       */
+      public boolean hasAutoParititonSeqName() {
+        return ((bitField0_ & 0x20000000) == 0x20000000);
+      }
+      /**
+       * <code>optional string autoParititonSeqName = 31;</code>
+       */
+      public java.lang.String getAutoParititonSeqName() {
+        java.lang.Object ref = autoParititonSeqName_;
+        if (!(ref instanceof java.lang.String)) {
+          java.lang.String s = ((com.google.protobuf.ByteString) ref)
+              .toStringUtf8();
+          autoParititonSeqName_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>optional string autoParititonSeqName = 31;</code>
+       */
+      public com.google.protobuf.ByteString
+          getAutoParititonSeqNameBytes() {
+        java.lang.Object ref = autoParititonSeqName_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          autoParititonSeqName_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>optional string autoParititonSeqName = 31;</code>
+       */
+      public Builder setAutoParititonSeqName(
+          java.lang.String value) {
+        if (value == null) {
+    throw new NullPointerException();
+  }
+  bitField0_ |= 0x20000000;
+        autoParititonSeqName_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string autoParititonSeqName = 31;</code>
+       */
+      public Builder clearAutoParititonSeqName() {
+        bitField0_ = (bitField0_ & ~0x20000000);
+        autoParititonSeqName_ = getDefaultInstance().getAutoParititonSeqName();
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string autoParititonSeqName = 31;</code>
+       */
+      public Builder setAutoParititonSeqNameBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) {
+    throw new NullPointerException();
+  }
+  bitField0_ |= 0x20000000;
+        autoParititonSeqName_ = value;
+        onChanged();
+        return this;
+      }
+
+      // optional bool isAppendOnlySchema = 32;
+      private boolean isAppendOnlySchema_ ;
+      /**
+       * <code>optional bool isAppendOnlySchema = 32;</code>
+       */
+      public boolean hasIsAppendOnlySchema() {
+        return ((bitField0_ & 0x40000000) == 0x40000000);
+      }
+      /**
+       * <code>optional bool isAppendOnlySchema = 32;</code>
+       */
+      public boolean getIsAppendOnlySchema() {
+        return isAppendOnlySchema_;
+      }
+      /**
+       * <code>optional bool isAppendOnlySchema = 32;</code>
+       */
+      public Builder setIsAppendOnlySchema(boolean value) {
+        bitField0_ |= 0x40000000;
+        isAppendOnlySchema_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional bool isAppendOnlySchema = 32;</code>
+       */
+      public Builder clearIsAppendOnlySchema() {
+        bitField0_ = (bitField0_ & ~0x40000000);
+        isAppendOnlySchema_ = false;
+        onChanged();
+        return this;
+      }
+
+      // optional bytes parentNameBytes = 33;
+      private com.google.protobuf.ByteString parentNameBytes_ = com.google.protobuf.ByteString.EMPTY;
+      /**
+       * <code>optional bytes parentNameBytes = 33;</code>
+       */
+      public boolean hasParentNameBytes() {
+        return ((bitField0_ & 0x80000000) == 0x80000000);
+      }
+      /**
+       * <code>optional bytes parentNameBytes = 33;</code>
+       */
+      public com.google.protobuf.ByteString getParentNameBytes() {
+        return parentNameBytes_;
+      }
+      /**
+       * <code>optional bytes parentNameBytes = 33;</code>
+       */
+      public Builder setParentNameBytes(com.google.protobuf.ByteString value) {
+        if (value == null) {
+    throw new NullPointerException();
+  }
+  bitField0_ |= 0x80000000;
+        parentNameBytes_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional bytes parentNameBytes = 33;</code>
+       */
+      public Builder clearParentNameBytes() {
+        bitField0_ = (bitField0_ & ~0x80000000);
+        parentNameBytes_ = getDefaultInstance().getParentNameBytes();
+        onChanged();
+        return this;
+      }
+
+      // optional bytes storageScheme = 34;
+      private com.google.protobuf.ByteString storageScheme_ = com.google.protobuf.ByteString.EMPTY;
+      /**
+       * <code>optional bytes storageScheme = 34;</code>
+       */
+      public boolean hasStorageScheme() {
+        return ((bitField1_ & 0x00000001) == 0x00000001);
+      }
+      /**
+       * <code>optional bytes storageScheme = 34;</code>
+       */
+      public com.google.protobuf.ByteString getStorageScheme() {
+        return storageScheme_;
+      }
+      /**
+       * <code>optional bytes storageScheme = 34;</code>
+       */
+      public Builder setStorageScheme(com.google.protobuf.ByteString value) {
+        if (value == null) {
+    throw new NullPointerException();
+  }
+  bitField1_ |= 0x00000001;
+        storageScheme_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional bytes storageScheme = 34;</code>
+       */
+      public Builder clearStorageScheme() {
+        bitField1_ = (bitField1_ & ~0x00000001);
+        storageScheme_ = getDefaultInstance().getStorageScheme();
+        onChanged();
+        return this;
+      }
+
+      // optional bytes encodingScheme = 35;
+      private com.google.protobuf.ByteString encodingScheme_ = com.google.protobuf.ByteString.EMPTY;
+      /**
+       * <code>optional bytes encodingScheme = 35;</code>
+       */
+      public boolean hasEncodingScheme() {
+        return ((bitField1_ & 0x00000002) == 0x00000002);
+      }
+      /**
+       * <code>optional bytes encodingScheme = 35;</code>
+       */
+      public com.google.protobuf.ByteString getEncodingScheme() {
+        return encodingScheme_;
+      }
+      /**
+       * <code>optional bytes encodingScheme = 35;</code>
+       */
+      public Builder setEncodingScheme(com.google.protobuf.ByteString value) {
+        if (value == null) {
+    throw new NullPointerException();
+  }
+  bitField1_ |= 0x00000002;
+        encodingScheme_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional bytes encodingScheme = 35;</code>
+       */
+      public Builder clearEncodingScheme() {
+        bitField1_ = (bitField1_ & ~0x00000002);
+        encodingScheme_ = getDefaultInstance().getEncodingScheme();
+        onChanged();
+        return this;
+      }
+
+      // repeated .EncodedCQCounter encodedCQCounters = 36;
+      private java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter> encodedCQCounters_ =
+        java.util.Collections.emptyList();
+      private void ensureEncodedCQCountersIsMutable() {
+        if (!((bitField1_ & 0x00000004) == 0x00000004)) {
+          encodedCQCounters_ = new java.util.ArrayList<org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter>(encodedCQCounters_);
+          bitField1_ |= 0x00000004;
+         }
+      }
+
+      private com.google.protobuf.RepeatedFieldBuilder<
+          org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder> encodedCQCountersBuilder_;
+
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter> getEncodedCQCountersList() {
+        if (encodedCQCountersBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(encodedCQCounters_);
+        } else {
+          return encodedCQCountersBuilder_.getMessageList();
+        }
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public int getEncodedCQCountersCount() {
+        if (encodedCQCountersBuilder_ == null) {
+          return encodedCQCounters_.size();
+        } else {
+          return encodedCQCountersBuilder_.getCount();
+        }
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter getEncodedCQCounters(int index) {
+        if (encodedCQCountersBuilder_ == null) {
+          return encodedCQCounters_.get(index);
+        } else {
+          return encodedCQCountersBuilder_.getMessage(index);
+        }
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder setEncodedCQCounters(
+          int index, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter value) {
+        if (encodedCQCountersBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureEncodedCQCountersIsMutable();
+          encodedCQCounters_.set(index, value);
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.setMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder setEncodedCQCounters(
+          int index, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder builderForValue) {
+        if (encodedCQCountersBuilder_ == null) {
+          ensureEncodedCQCountersIsMutable();
+          encodedCQCounters_.set(index, builderForValue.build());
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.setMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder addEncodedCQCounters(org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter value) {
+        if (encodedCQCountersBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureEncodedCQCountersIsMutable();
+          encodedCQCounters_.add(value);
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.addMessage(value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder addEncodedCQCounters(
+          int index, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter value) {
+        if (encodedCQCountersBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureEncodedCQCountersIsMutable();
+          encodedCQCounters_.add(index, value);
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.addMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder addEncodedCQCounters(
+          org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder builderForValue) {
+        if (encodedCQCountersBuilder_ == null) {
+          ensureEncodedCQCountersIsMutable();
+          encodedCQCounters_.add(builderForValue.build());
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.addMessage(builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder addEncodedCQCounters(
+          int index, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder builderForValue) {
+        if (encodedCQCountersBuilder_ == null) {
+          ensureEncodedCQCountersIsMutable();
+          encodedCQCounters_.add(index, builderForValue.build());
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.addMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder addAllEncodedCQCounters(
+          java.lang.Iterable<? extends org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter> values) {
+        if (encodedCQCountersBuilder_ == null) {
+          ensureEncodedCQCountersIsMutable();
+          super.addAll(values, encodedCQCounters_);
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.addAllMessages(values);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder clearEncodedCQCounters() {
+        if (encodedCQCountersBuilder_ == null) {
+          encodedCQCounters_ = java.util.Collections.emptyList();
+          bitField1_ = (bitField1_ & ~0x00000004);
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public Builder removeEncodedCQCounters(int index) {
+        if (encodedCQCountersBuilder_ == null) {
+          ensureEncodedCQCountersIsMutable();
+          encodedCQCounters_.remove(index);
+          onChanged();
+        } else {
+          encodedCQCountersBuilder_.remove(index);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder getEncodedCQCountersBuilder(
+          int index) {
+        return getEncodedCQCountersFieldBuilder().getBuilder(index);
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder getEncodedCQCountersOrBuilder(
+          int index) {
+        if (encodedCQCountersBuilder_ == null) {
+          return encodedCQCounters_.get(index);  } else {
+          return encodedCQCountersBuilder_.getMessageOrBuilder(index);
+        }
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public java.util.List<? extends org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder> 
+           getEncodedCQCountersOrBuilderList() {
+        if (encodedCQCountersBuilder_ != null) {
+          return encodedCQCountersBuilder_.getMessageOrBuilderList();
+        } else {
+          return java.util.Collections.unmodifiableList(encodedCQCounters_);
+        }
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder addEncodedCQCountersBuilder() {
+        return getEncodedCQCountersFieldBuilder().addBuilder(
+            org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder addEncodedCQCountersBuilder(
+          int index) {
+        return getEncodedCQCountersFieldBuilder().addBuilder(
+            index, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .EncodedCQCounter encodedCQCounters = 36;</code>
+       */
+      public java.util.List<org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder> 
+           getEncodedCQCountersBuilderList() {
+        return getEncodedCQCountersFieldBuilder().getBuilderList();
+      }
+      private com.google.protobuf.RepeatedFieldBuilder<
+          org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder> 
+          getEncodedCQCountersFieldBuilder() {
+        if (encodedCQCountersBuilder_ == null) {
+          encodedCQCountersBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder>(
+                  encodedCQCounters_,
+                  ((bitField1_ & 0x00000004) == 0x00000004),
+                  getParentForChildren(),
+                  isClean());
+          encodedCQCounters_ = null;
+        }
+        return encodedCQCountersBuilder_;
+      }
+
+      // optional bool useStatsForParallelization = 37;
+      private boolean useStatsForParallelization_ ;
+      /**
+       * <code>optional bool useStatsForParallelization = 37;</code>
+       */
+      public boolean hasUseStatsForParallelization() {
+        return ((bitField1_ & 0x00000008) == 0x00000008);
+      }
+      /**
+       * <code>optional bool useStatsForParallelization = 37;</code>
+       */
+      public boolean getUseStatsForParallelization() {
+        return useStatsForParallelization_;
+      }
+      /**
+       * <code>optional bool useStatsForParallelization = 37;</code>
+       */
+      public Builder setUseStatsForParallelization(boolean value) {
+        bitField1_ |= 0x00000008;
+        useStatsForParallelization_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional bool useStatsForParallelization = 37;</code>
+       */
+      public Builder clearUseStatsForParallelization() {
+        bitField1_ = (bitField1_ & ~0x00000008);
+        useStatsForParallelization_ = false;
         onChanged();
         return this;
       }
@@ -7153,6 +7929,621 @@ public final class PTableProtos {
     }
 
     // @@protoc_insertion_point(class_scope:PTable)
+  }
+
+  public interface EncodedCQCounterOrBuilder
+      extends com.google.protobuf.MessageOrBuilder {
+
+    // required string colFamily = 1;
+    /**
+     * <code>required string colFamily = 1;</code>
+     */
+    boolean hasColFamily();
+    /**
+     * <code>required string colFamily = 1;</code>
+     */
+    java.lang.String getColFamily();
+    /**
+     * <code>required string colFamily = 1;</code>
+     */
+    com.google.protobuf.ByteString
+        getColFamilyBytes();
+
+    // required int32 counter = 2;
+    /**
+     * <code>required int32 counter = 2;</code>
+     */
+    boolean hasCounter();
+    /**
+     * <code>required int32 counter = 2;</code>
+     */
+    int getCounter();
+  }
+  /**
+   * Protobuf type {@code EncodedCQCounter}
+   */
+  public static final class EncodedCQCounter extends
+      com.google.protobuf.GeneratedMessage
+      implements EncodedCQCounterOrBuilder {
+    // Use EncodedCQCounter.newBuilder() to construct.
+    private EncodedCQCounter(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+      this.unknownFields = builder.getUnknownFields();
+    }
+    private EncodedCQCounter(boolean noInit) { this.unknownFields = com.google.protobuf.UnknownFieldSet.getDefaultInstance(); }
+
+    private static final EncodedCQCounter defaultInstance;
+    public static EncodedCQCounter getDefaultInstance() {
+      return defaultInstance;
+    }
+
+    public EncodedCQCounter getDefaultInstanceForType() {
+      return defaultInstance;
+    }
+
+    private final com.google.protobuf.UnknownFieldSet unknownFields;
+    @java.lang.Override
+    public final com.google.protobuf.UnknownFieldSet
+        getUnknownFields() {
+      return this.unknownFields;
+    }
+    private EncodedCQCounter(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      initFields();
+      int mutable_bitField0_ = 0;
+      com.google.protobuf.UnknownFieldSet.Builder unknownFields =
+          com.google.protobuf.UnknownFieldSet.newBuilder();
+      try {
+        boolean done = false;
+        while (!done) {
+          int tag = input.readTag();
+          switch (tag) {
+            case 0:
+              done = true;
+              break;
+            default: {
+              if (!parseUnknownField(input, unknownFields,
+                                     extensionRegistry, tag)) {
+                done = true;
+              }
+              break;
+            }
+            case 10: {
+              bitField0_ |= 0x00000001;
+              colFamily_ = input.readBytes();
+              break;
+            }
+            case 16: {
+              bitField0_ |= 0x00000002;
+              counter_ = input.readInt32();
+              break;
+            }
+          }
+        }
+      } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+        throw e.setUnfinishedMessage(this);
+      } catch (java.io.IOException e) {
+        throw new com.google.protobuf.InvalidProtocolBufferException(
+            e.getMessage()).setUnfinishedMessage(this);
+      } finally {
+        this.unknownFields = unknownFields.build();
+        makeExtensionsImmutable();
+      }
+    }
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return org.apache.phoenix.coprocessor.generated.PTableProtos.internal_static_EncodedCQCounter_descriptor;
+    }
+
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return org.apache.phoenix.coprocessor.generated.PTableProtos.internal_static_EncodedCQCounter_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.class, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder.class);
+    }
+
+    public static com.google.protobuf.Parser<EncodedCQCounter> PARSER =
+        new com.google.protobuf.AbstractParser<EncodedCQCounter>() {
+      public EncodedCQCounter parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        return new EncodedCQCounter(input, extensionRegistry);
+      }
+    };
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<EncodedCQCounter> getParserForType() {
+      return PARSER;
+    }
+
+    private int bitField0_;
+    // required string colFamily = 1;
+    public static final int COLFAMILY_FIELD_NUMBER = 1;
+    private java.lang.Object colFamily_;
+    /**
+     * <code>required string colFamily = 1;</code>
+     */
+    public boolean hasColFamily() {
+      return ((bitField0_ & 0x00000001) == 0x00000001);
+    }
+    /**
+     * <code>required string colFamily = 1;</code>
+     */
+    public java.lang.String getColFamily() {
+      java.lang.Object ref = colFamily_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        if (bs.isValidUtf8()) {
+          colFamily_ = s;
+        }
+        return s;
+      }
+    }
+    /**
+     * <code>required string colFamily = 1;</code>
+     */
+    public com.google.protobuf.ByteString
+        getColFamilyBytes() {
+      java.lang.Object ref = colFamily_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        colFamily_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    // required int32 counter = 2;
+    public static final int COUNTER_FIELD_NUMBER = 2;
+    private int counter_;
+    /**
+     * <code>required int32 counter = 2;</code>
+     */
+    public boolean hasCounter() {
+      return ((bitField0_ & 0x00000002) == 0x00000002);
+    }
+    /**
+     * <code>required int32 counter = 2;</code>
+     */
+    public int getCounter() {
+      return counter_;
+    }
+
+    private void initFields() {
+      colFamily_ = "";
+      counter_ = 0;
+    }
+    private byte memoizedIsInitialized = -1;
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized != -1) return isInitialized == 1;
+
+      if (!hasColFamily()) {
+        memoizedIsInitialized = 0;
+        return false;
+      }
+      if (!hasCounter()) {
+        memoizedIsInitialized = 0;
+        return false;
+      }
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      getSerializedSize();
+      if (((bitField0_ & 0x00000001) == 0x00000001)) {
+        output.writeBytes(1, getColFamilyBytes());
+      }
+      if (((bitField0_ & 0x00000002) == 0x00000002)) {
+        output.writeInt32(2, counter_);
+      }
+      getUnknownFields().writeTo(output);
+    }
+
+    private int memoizedSerializedSize = -1;
+    public int getSerializedSize() {
+      int size = memoizedSerializedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      if (((bitField0_ & 0x00000001) == 0x00000001)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBytesSize(1, getColFamilyBytes());
+      }
+      if (((bitField0_ & 0x00000002) == 0x00000002)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt32Size(2, counter_);
+      }
+      size += getUnknownFields().getSerializedSize();
+      memoizedSerializedSize = size;
+      return size;
+    }
+
+    private static final long serialVersionUID = 0L;
+    @java.lang.Override
+    protected java.lang.Object writeReplace()
+        throws java.io.ObjectStreamException {
+      return super.writeReplace();
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter)) {
+        return super.equals(obj);
+      }
+      org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter other = (org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter) obj;
+
+      boolean result = true;
+      result = result && (hasColFamily() == other.hasColFamily());
+      if (hasColFamily()) {
+        result = result && getColFamily()
+            .equals(other.getColFamily());
+      }
+      result = result && (hasCounter() == other.hasCounter());
+      if (hasCounter()) {
+        result = result && (getCounter()
+            == other.getCounter());
+      }
+      result = result &&
+          getUnknownFields().equals(other.getUnknownFields());
+      return result;
+    }
+
+    private int memoizedHashCode = 0;
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptorForType().hashCode();
+      if (hasColFamily()) {
+        hash = (37 * hash) + COLFAMILY_FIELD_NUMBER;
+        hash = (53 * hash) + getColFamily().hashCode();
+      }
+      if (hasCounter()) {
+        hash = (37 * hash) + COUNTER_FIELD_NUMBER;
+        hash = (53 * hash) + getCounter();
+      }
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return PARSER.parseFrom(input);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return PARSER.parseFrom(input, extensionRegistry);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return PARSER.parseDelimitedFrom(input);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return PARSER.parseDelimitedFrom(input, extensionRegistry);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return PARSER.parseFrom(input);
+    }
+    public static org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return PARSER.parseFrom(input, extensionRegistry);
+    }
+
+    public static Builder newBuilder() { return Builder.create(); }
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder(org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter prototype) {
+      return newBuilder().mergeFrom(prototype);
+    }
+    public Builder toBuilder() { return newBuilder(this); }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * Protobuf type {@code EncodedCQCounter}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder>
+       implements org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounterOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return org.apache.phoenix.coprocessor.generated.PTableProtos.internal_static_EncodedCQCounter_descriptor;
+      }
+
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return org.apache.phoenix.coprocessor.generated.PTableProtos.internal_static_EncodedCQCounter_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.class, org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.Builder.class);
+      }
+
+      // Construct using org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.newBuilder()
+      private Builder() {
+        maybeForceBuilderInitialization();
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+        maybeForceBuilderInitialization();
+      }
+      private void maybeForceBuilderInitialization() {
+        if (com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders) {
+        }
+      }
+      private static Builder create() {
+        return new Builder();
+      }
+
+      public Builder clear() {
+        super.clear();
+        colFamily_ = "";
+        bitField0_ = (bitField0_ & ~0x00000001);
+        counter_ = 0;
+        bitField0_ = (bitField0_ & ~0x00000002);
+        return this;
+      }
+
+      public Builder clone() {
+        return create().mergeFrom(buildPartial());
+      }
+
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return org.apache.phoenix.coprocessor.generated.PTableProtos.internal_static_EncodedCQCounter_descriptor;
+      }
+
+      public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter getDefaultInstanceForType() {
+        return org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.getDefaultInstance();
+      }
+
+      public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter build() {
+        org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      public org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter buildPartial() {
+        org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter result = new org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter(this);
+        int from_bitField0_ = bitField0_;
+        int to_bitField0_ = 0;
+        if (((from_bitField0_ & 0x00000001) == 0x00000001)) {
+          to_bitField0_ |= 0x00000001;
+        }
+        result.colFamily_ = colFamily_;
+        if (((from_bitField0_ & 0x00000002) == 0x00000002)) {
+          to_bitField0_ |= 0x00000002;
+        }
+        result.counter_ = counter_;
+        result.bitField0_ = to_bitField0_;
+        onBuilt();
+        return result;
+      }
+
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter) {
+          return mergeFrom((org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter other) {
+        if (other == org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter.getDefaultInstance()) return this;
+        if (other.hasColFamily()) {
+          bitField0_ |= 0x00000001;
+          colFamily_ = other.colFamily_;
+          onChanged();
+        }
+        if (other.hasCounter()) {
+          setCounter(other.getCounter());
+        }
+        this.mergeUnknownFields(other.getUnknownFields());
+        return this;
+      }
+
+      public final boolean isInitialized() {
+        if (!hasColFamily()) {
+          
+          return false;
+        }
+        if (!hasCounter()) {
+          
+          return false;
+        }
+        return true;
+      }
+
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter parsedMessage = null;
+        try {
+          parsedMessage = PARSER.parsePartialFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          parsedMessage = (org.apache.phoenix.coprocessor.generated.PTableProtos.EncodedCQCounter) e.getUnfinishedMessage();
+          throw e;
+        } finally {
+          if (parsedMessage != null) {
+            mergeFrom(parsedMessage);
+          }
+        }
+        return this;
+      }
+      private int bitField0_;
+
+      // required string colFamily = 1;
+      private java.lang.Object colFamily_ = "";
+      /**
+       * <code>required string colFamily = 1;</code>
+       */
+      public boolean hasColFamily() {
+        return ((bitField0_ & 0x00000001) == 0x00000001);
+      }
+      /**
+       * <code>required string colFamily = 1;</code>
+       */
+      public java.lang.String getColFamily() {
+        java.lang.Object ref = colFamily_;
+        if (!(ref instanceof java.lang.String)) {
+          java.lang.String s = ((com.google.protobuf.ByteString) ref)
+              .toStringUtf8();
+          colFamily_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>required string colFamily = 1;</code>
+       */
+      public com.google.protobuf.ByteString
+          getColFamilyBytes() {
+        java.lang.Object ref = colFamily_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          colFamily_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>required string colFamily = 1;</code>
+       */
+      public Builder setColFamily(
+          java.lang.String value) {
+        if (value == null) {
+    throw new NullPointerException();
+  }
+  bitField0_ |= 0x00000001;
+        colFamily_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>required string colFamily = 1;</code>
+       */
+      public Builder clearColFamily() {
+        bitField0_ = (bitField0_ & ~0x00000001);
+        colFamily_ = getDefaultInstance().getColFamily();
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>required string colFamily = 1;</code>
+       */
+      public Builder setColFamilyBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) {
+    throw new NullPointerException();
+  }
+  bitField0_ |= 0x00000001;
+        colFamily_ = value;
+        onChanged();
+        return this;
+      }
+
+      // required int32 counter = 2;
+      private int counter_ ;
+      /**
+       * <code>required int32 counter = 2;</code>
+       */
+      public boolean hasCounter() {
+        return ((bitField0_ & 0x00000002) == 0x00000002);
+      }
+      /**
+       * <code>required int32 counter = 2;</code>
+       */
+      public int getCounter() {
+        return counter_;
+      }
+      /**
+       * <code>required int32 counter = 2;</code>
+       */
+      public Builder setCounter(int value) {
+        bitField0_ |= 0x00000002;
+        counter_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>required int32 counter = 2;</code>
+       */
+      public Builder clearCounter() {
+        bitField0_ = (bitField0_ & ~0x00000002);
+        counter_ = 0;
+        onChanged();
+        return this;
+      }
+
+      // @@protoc_insertion_point(builder_scope:EncodedCQCounter)
+    }
+
+    static {
+      defaultInstance = new EncodedCQCounter(true);
+      defaultInstance.initFields();
+    }
+
+    // @@protoc_insertion_point(class_scope:EncodedCQCounter)
   }
 
   private static com.google.protobuf.Descriptors.Descriptor
@@ -7170,6 +8561,11 @@ public final class PTableProtos {
   private static
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_PTable_fieldAccessorTable;
+  private static com.google.protobuf.Descriptors.Descriptor
+    internal_static_EncodedCQCounter_descriptor;
+  private static
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_EncodedCQCounter_fieldAccessorTable;
 
   public static com.google.protobuf.Descriptors.FileDescriptor
       getDescriptor() {
@@ -7179,7 +8575,7 @@ public final class PTableProtos {
       descriptor;
   static {
     java.lang.String[] descriptorData = {
-      "\n\014PTable.proto\032\021PGuidePosts.proto\"\246\002\n\007PC" +
+      "\n\014PTable.proto\032\021PGuidePosts.proto\"\304\002\n\007PC" +
       "olumn\022\027\n\017columnNameBytes\030\001 \002(\014\022\027\n\017family" +
       "NameBytes\030\002 \001(\014\022\020\n\010dataType\030\003 \002(\t\022\021\n\tmax" +
       "Length\030\004 \001(\005\022\r\n\005scale\030\005 \001(\005\022\020\n\010nullable\030" +
@@ -7187,32 +8583,39 @@ public final class PTableProtos {
       "(\005\022\021\n\tarraySize\030\t \001(\005\022\024\n\014viewConstant\030\n " +
       "\001(\014\022\026\n\016viewReferenced\030\013 \001(\010\022\022\n\nexpressio" +
       "n\030\014 \001(\t\022\026\n\016isRowTimestamp\030\r \001(\010\022\021\n\tisDyn" +
-      "amic\030\016 \001(\010\"\232\001\n\013PTableStats\022\013\n\003key\030\001 \002(\014\022" +
-      "\016\n\006values\030\002 \003(\014\022\033\n\023guidePostsByteCount\030\003",
-      " \001(\003\022\025\n\rkeyBytesCount\030\004 \001(\003\022\027\n\017guidePost" +
-      "sCount\030\005 \001(\005\022!\n\013pGuidePosts\030\006 \001(\0132\014.PGui" +
-      "dePosts\"\336\005\n\006PTable\022\027\n\017schemaNameBytes\030\001 " +
-      "\002(\014\022\026\n\016tableNameBytes\030\002 \002(\014\022\036\n\ttableType" +
-      "\030\003 \002(\0162\013.PTableType\022\022\n\nindexState\030\004 \001(\t\022" +
-      "\026\n\016sequenceNumber\030\005 \002(\003\022\021\n\ttimeStamp\030\006 \002" +
-      "(\003\022\023\n\013pkNameBytes\030\007 \001(\014\022\021\n\tbucketNum\030\010 \002" +
-      "(\005\022\031\n\007columns\030\t \003(\0132\010.PColumn\022\030\n\007indexes" +
-      "\030\n \003(\0132\007.PTable\022\027\n\017isImmutableRows\030\013 \002(\010" +
-      "\022 \n\nguidePosts\030\014 \003(\0132\014.PTableStats\022\032\n\022da",
-      "taTableNameBytes\030\r \001(\014\022\031\n\021defaultFamilyN" +
-      "ame\030\016 \001(\014\022\022\n\ndisableWAL\030\017 \002(\010\022\023\n\013multiTe" +
-      "nant\030\020 \002(\010\022\020\n\010viewType\030\021 \001(\014\022\025\n\rviewStat" +
-      "ement\030\022 \001(\014\022\025\n\rphysicalNames\030\023 \003(\014\022\020\n\010te" +
-      "nantId\030\024 \001(\014\022\023\n\013viewIndexId\030\025 \001(\005\022\021\n\tind" +
-      "exType\030\026 \001(\014\022\026\n\016statsTimeStamp\030\027 \001(\003\022\022\n\n" +
-      "storeNulls\030\030 \001(\010\022\027\n\017baseColumnCount\030\031 \001(" +
-      "\005\022\036\n\026rowKeyOrderOptimizable\030\032 \001(\010\022\025\n\rtra" +
-      "nsactional\030\033 \001(\010\022\034\n\024updateCacheFrequency" +
-      "\030\034 \001(\003\022\035\n\025indexDisableTimestamp\030\035 \001(\003\022\031\n",
-      "\021isNamespaceMapped\030\036 \001(\010*A\n\nPTableType\022\n" +
-      "\n\006SYSTEM\020\000\022\010\n\004USER\020\001\022\010\n\004VIEW\020\002\022\t\n\005INDEX\020" +
-      "\003\022\010\n\004JOIN\020\004B@\n(org.apache.phoenix.coproc" +
-      "essor.generatedB\014PTableProtosH\001\210\001\001\240\001\001"
+      "amic\030\016 \001(\010\022\034\n\024columnQualifierBytes\030\017 \001(\014" +
+      "\"\232\001\n\013PTableStats\022\013\n\003key\030\001 \002(\014\022\016\n\006values\030",
+      "\002 \003(\014\022\033\n\023guidePostsByteCount\030\003 \001(\003\022\025\n\rke" +
+      "yBytesCount\030\004 \001(\003\022\027\n\017guidePostsCount\030\005 \001" +
+      "(\005\022!\n\013pGuidePosts\030\006 \001(\0132\014.PGuidePosts\"\220\007" +
+      "\n\006PTable\022\027\n\017schemaNameBytes\030\001 \002(\014\022\026\n\016tab" +
+      "leNameBytes\030\002 \002(\014\022\036\n\ttableType\030\003 \002(\0162\013.P" +
+      "TableType\022\022\n\nindexState\030\004 \001(\t\022\026\n\016sequenc" +
+      "eNumber\030\005 \002(\003\022\021\n\ttimeStamp\030\006 \002(\003\022\023\n\013pkNa" +
+      "meBytes\030\007 \001(\014\022\021\n\tbucketNum\030\010 \002(\005\022\031\n\007colu" +
+      "mns\030\t \003(\0132\010.PColumn\022\030\n\007indexes\030\n \003(\0132\007.P" +
+      "Table\022\027\n\017isImmutableRows\030\013 \002(\010\022\032\n\022dataTa",
+      "bleNameBytes\030\r \001(\014\022\031\n\021defaultFamilyName\030" +
+      "\016 \001(\014\022\022\n\ndisableWAL\030\017 \002(\010\022\023\n\013multiTenant" +
+      "\030\020 \002(\010\022\020\n\010viewType\030\021 \001(\014\022\025\n\rviewStatemen" +
+      "t\030\022 \001(\014\022\025\n\rphysicalNames\030\023 \003(\014\022\020\n\010tenant" +
+      "Id\030\024 \001(\014\022\023\n\013viewIndexId\030\025 \001(\005\022\021\n\tindexTy" +
+      "pe\030\026 \001(\014\022\026\n\016statsTimeStamp\030\027 \001(\003\022\022\n\nstor" +
+      "eNulls\030\030 \001(\010\022\027\n\017baseColumnCount\030\031 \001(\005\022\036\n" +
+      "\026rowKeyOrderOptimizable\030\032 \001(\010\022\025\n\rtransac" +
+      "tional\030\033 \001(\010\022\034\n\024updateCacheFrequency\030\034 \001" +
+      "(\003\022\035\n\025indexDisableTimestamp\030\035 \001(\003\022\031\n\021isN",
+      "amespaceMapped\030\036 \001(\010\022\034\n\024autoParititonSeq" +
+      "Name\030\037 \001(\t\022\032\n\022isAppendOnlySchema\030  \001(\010\022\027" +
+      "\n\017parentNameBytes\030! \001(\014\022\025\n\rstorageScheme" +
+      "\030\" \001(\014\022\026\n\016encodingScheme\030# \001(\014\022,\n\021encode" +
+      "dCQCounters\030$ \003(\0132\021.EncodedCQCounter\022\"\n\032" +
+      "useStatsForParallelization\030% \001(\010\"6\n\020Enco" +
+      "dedCQCounter\022\021\n\tcolFamily\030\001 \002(\t\022\017\n\007count" +
+      "er\030\002 \002(\005*A\n\nPTableType\022\n\n\006SYSTEM\020\000\022\010\n\004US" +
+      "ER\020\001\022\010\n\004VIEW\020\002\022\t\n\005INDEX\020\003\022\010\n\004JOIN\020\004B@\n(o" +
+      "rg.apache.phoenix.coprocessor.generatedB",
+      "\014PTableProtosH\001\210\001\001\240\001\001"
     };
     com.google.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner assigner =
       new com.google.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner() {
@@ -7224,7 +8627,7 @@ public final class PTableProtos {
           internal_static_PColumn_fieldAccessorTable = new
             com.google.protobuf.GeneratedMessage.FieldAccessorTable(
               internal_static_PColumn_descriptor,
-              new java.lang.String[] { "ColumnNameBytes", "FamilyNameBytes", "DataType", "MaxLength", "Scale", "Nullable", "Position", "SortOrder", "ArraySize", "ViewConstant", "ViewReferenced", "Expression", "IsRowTimestamp", "IsDynamic", });
+              new java.lang.String[] { "ColumnNameBytes", "FamilyNameBytes", "DataType", "MaxLength", "Scale", "Nullable", "Position", "SortOrder", "ArraySize", "ViewConstant", "ViewReferenced", "Expression", "IsRowTimestamp", "IsDynamic", "ColumnQualifierBytes", });
           internal_static_PTableStats_descriptor =
             getDescriptor().getMessageTypes().get(1);
           internal_static_PTableStats_fieldAccessorTable = new
@@ -7236,7 +8639,13 @@ public final class PTableProtos {
           internal_static_PTable_fieldAccessorTable = new
             com.google.protobuf.GeneratedMessage.FieldAccessorTable(
               internal_static_PTable_descriptor,
-              new java.lang.String[] { "SchemaNameBytes", "TableNameBytes", "TableType", "IndexState", "SequenceNumber", "TimeStamp", "PkNameBytes", "BucketNum", "Columns", "Indexes", "IsImmutableRows", "GuidePosts", "DataTableNameBytes", "DefaultFamilyName", "DisableWAL", "MultiTenant", "ViewType", "ViewStatement", "PhysicalNames", "TenantId", "ViewIndexId", "IndexType", "StatsTimeStamp", "StoreNulls", "BaseColumnCount", "RowKeyOrderOptimizable", "Transactional", "UpdateCacheFrequency", "IndexDisableTimestamp", "IsNamespaceMapped", });
+              new java.lang.String[] { "SchemaNameBytes", "TableNameBytes", "TableType", "IndexState", "SequenceNumber", "TimeStamp", "PkNameBytes", "BucketNum", "Columns", "Indexes", "IsImmutableRows", "DataTableNameBytes", "DefaultFamilyName", "DisableWAL", "MultiTenant", "ViewType", "ViewStatement", "PhysicalNames", "TenantId", "ViewIndexId", "IndexType", "StatsTimeStamp", "StoreNulls", "BaseColumnCount", "RowKeyOrderOptimizable", "Transactional", "UpdateCacheFrequency", "IndexDisableTimestamp", "IsNamespaceMapped", "AutoParititonSeqName", "IsAppendOnlySchema", "ParentNameBytes", "StorageScheme", "EncodingScheme", "EncodedCQCounters", "UseStatsForParallelization", });
+          internal_static_EncodedCQCounter_descriptor =
+            getDescriptor().getMessageTypes().get(3);
+          internal_static_EncodedCQCounter_fieldAccessorTable = new
+            com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+              internal_static_EncodedCQCounter_descriptor,
+              new java.lang.String[] { "ColFamily", "Counter", });
           return null;
         }
       };

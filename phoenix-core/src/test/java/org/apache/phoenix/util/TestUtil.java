@@ -17,7 +17,10 @@
  */
 package org.apache.phoenix.util;
 
+import static org.apache.phoenix.query.BaseTest.generateUniqueName;
 import static org.apache.phoenix.query.QueryConstants.MILLIS_IN_DAY;
+import static org.apache.phoenix.query.QueryConstants.SINGLE_COLUMN_FAMILY_NAME;
+import static org.apache.phoenix.query.QueryConstants.SINGLE_COLUMN_NAME;
 import static org.apache.phoenix.util.PhoenixRuntime.CONNECTIONLESS;
 import static org.apache.phoenix.util.PhoenixRuntime.JDBC_PROTOCOL;
 import static org.apache.phoenix.util.PhoenixRuntime.JDBC_PROTOCOL_SEPARATOR;
@@ -25,6 +28,7 @@ import static org.apache.phoenix.util.PhoenixRuntime.JDBC_PROTOCOL_TERMINATOR;
 import static org.apache.phoenix.util.PhoenixRuntime.PHOENIX_TEST_DRIVER_URL_PARAM;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -42,12 +46,21 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellScanner;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HTableInterface;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.coprocessor.Batch;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
@@ -55,10 +68,13 @@ import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.ipc.BlockingRpcCallback;
 import org.apache.hadoop.hbase.ipc.ServerRpcController;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.compile.AggregationManager;
+import org.apache.phoenix.compile.SequenceManager;
 import org.apache.phoenix.compile.StatementContext;
 import org.apache.phoenix.coprocessor.generated.MetaDataProtos.ClearCacheRequest;
 import org.apache.phoenix.coprocessor.generated.MetaDataProtos.ClearCacheResponse;
 import org.apache.phoenix.coprocessor.generated.MetaDataProtos.MetaDataService;
+import org.apache.phoenix.execute.MutationState;
 import org.apache.phoenix.expression.AndExpression;
 import org.apache.phoenix.expression.ByteBasedLikeExpression;
 import org.apache.phoenix.expression.ComparisonExpression;
@@ -70,8 +86,12 @@ import org.apache.phoenix.expression.NotExpression;
 import org.apache.phoenix.expression.OrExpression;
 import org.apache.phoenix.expression.RowKeyColumnExpression;
 import org.apache.phoenix.expression.StringBasedLikeExpression;
+import org.apache.phoenix.expression.aggregator.ClientAggregators;
+import org.apache.phoenix.expression.function.SingleAggregateFunction;
 import org.apache.phoenix.expression.function.SubstrFunction;
+import org.apache.phoenix.expression.function.SumAggregateFunction;
 import org.apache.phoenix.filter.MultiCQKeyValueComparisonFilter;
+import org.apache.phoenix.filter.MultiEncodedCQKeyValueComparisonFilter;
 import org.apache.phoenix.filter.MultiKeyValueComparisonFilter;
 import org.apache.phoenix.filter.RowKeyComparisonFilter;
 import org.apache.phoenix.filter.SingleCQKeyValueComparisonFilter;
@@ -79,16 +99,24 @@ import org.apache.phoenix.filter.SingleKeyValueComparisonFilter;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
 import org.apache.phoenix.jdbc.PhoenixPreparedStatement;
+import org.apache.phoenix.jdbc.PhoenixStatement;
 import org.apache.phoenix.parse.LikeParseNode.LikeType;
+import org.apache.phoenix.query.ConnectionQueryServices;
 import org.apache.phoenix.query.KeyRange;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.schema.PColumn;
+import org.apache.phoenix.schema.PLongColumn;
+import org.apache.phoenix.schema.PName;
+import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTable.QualifierEncodingScheme;
+import org.apache.phoenix.schema.PTableKey;
 import org.apache.phoenix.schema.RowKeyValueAccessor;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.stats.GuidePostsInfo;
-import org.apache.phoenix.schema.stats.PTableStats;
+import org.apache.phoenix.schema.stats.GuidePostsKey;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.schema.types.PDataType;
 
@@ -97,11 +125,34 @@ import com.google.common.collect.Lists;
 
 
 public class TestUtil {
+    private static final Log LOG = LogFactory.getLog(TestUtil.class);
+    
     public static final String DEFAULT_SCHEMA_NAME = "";
     public static final String DEFAULT_DATA_TABLE_NAME = "T";
     public static final String DEFAULT_INDEX_TABLE_NAME = "I";
     public static final String DEFAULT_DATA_TABLE_FULL_NAME = SchemaUtil.getTableName(DEFAULT_SCHEMA_NAME, "T");
     public static final String DEFAULT_INDEX_TABLE_FULL_NAME = SchemaUtil.getTableName(DEFAULT_SCHEMA_NAME, "I");
+
+    public static final String TEST_TABLE_SCHEMA = "(" +
+    "   varchar_pk VARCHAR NOT NULL, " +
+    "   char_pk CHAR(10) NOT NULL, " +
+    "   int_pk INTEGER NOT NULL, "+ 
+    "   long_pk BIGINT NOT NULL, " +
+    "   decimal_pk DECIMAL(31, 10) NOT NULL, " +
+    "   date_pk DATE NOT NULL, " +
+    "   a.varchar_col1 VARCHAR, " +
+    "   a.char_col1 CHAR(10), " +
+    "   a.int_col1 INTEGER, " +
+    "   a.long_col1 BIGINT, " +
+    "   a.decimal_col1 DECIMAL(31, 10), " +
+    "   a.date1 DATE, " +
+    "   b.varchar_col2 VARCHAR, " +
+    "   b.char_col2 CHAR(10), " +
+    "   b.int_col2 INTEGER, " +
+    "   b.long_col2 BIGINT, " +
+    "   b.decimal_col2 DECIMAL(31, 10), " +
+    "   b.date2 DATE " +
+    "   CONSTRAINT pk PRIMARY KEY (varchar_pk, char_pk, int_pk, long_pk DESC, decimal_pk, date_pk)) ";
     
     private TestUtil() {
     }
@@ -310,7 +361,11 @@ public class TestUtil {
     }
 
     public static MultiKeyValueComparisonFilter multiKVFilter(Expression e) {
-        return  new MultiCQKeyValueComparisonFilter(e);
+        return  new MultiCQKeyValueComparisonFilter(e, false, ByteUtil.EMPTY_BYTE_ARRAY);
+    }
+    
+    public static MultiEncodedCQKeyValueComparisonFilter multiEncodedKVFilter(Expression e, QualifierEncodingScheme encodingScheme) {
+        return  new MultiEncodedCQKeyValueComparisonFilter(e, encodingScheme, false, null);
     }
 
     public static Expression and(Expression... expressions) {
@@ -349,6 +404,12 @@ public class TestUtil {
         assertArrayEquals(KeyRange.EMPTY_RANGE.getLowerRange(), scan.getStartRow());
         assertArrayEquals(KeyRange.EMPTY_RANGE.getLowerRange(), scan.getStopRow());
         assertEquals(null,scan.getFilter());
+    }
+
+    public static void assertNotDegenerate(Scan scan) {
+        assertFalse(
+                Bytes.compareTo(KeyRange.EMPTY_RANGE.getLowerRange(), scan.getStartRow()) == 0 &&
+                Bytes.compareTo(KeyRange.EMPTY_RANGE.getLowerRange(), scan.getStopRow()) == 0);
     }
 
     public static void assertEmptyScanKey(Scan scan) {
@@ -437,8 +498,8 @@ public class TestUtil {
      * @param input
      *            input to be inserted
      */
-    public static void upsertRow(Connection conn, String sortOrder, int id, Object input) throws SQLException {
-        String dml = String.format("UPSERT INTO TEST_TABLE_%s VALUES(?,?)", sortOrder);
+    public static void upsertRow(Connection conn, String tableName, String sortOrder, int id, Object input) throws SQLException {
+        String dml = String.format("UPSERT INTO " + tableName + "_%s VALUES(?,?)", sortOrder);
         PreparedStatement stmt = conn.prepareStatement(dml);
         stmt.setInt(1, id);
         if (input instanceof String)
@@ -459,11 +520,17 @@ public class TestUtil {
         conn.commit();
     }
 
-    private static void createTable(Connection conn, String inputSqlType, String sortOrder) throws SQLException {
+    public static void createGroupByTestTable(Connection conn, String tableName) throws SQLException {
+        conn.createStatement().execute("create table " + tableName +
+                "   (id varchar not null primary key,\n" +
+                "    uri varchar, appcpu integer)");
+    }
+    
+    private static void createTable(Connection conn, String inputSqlType, String tableName, String sortOrder) throws SQLException {
         String dmlFormat =
-            "CREATE TABLE TEST_TABLE_%s" + "(id INTEGER NOT NULL, pk %s NOT NULL, " + "kv %s "
+            "CREATE TABLE " + tableName + "_%s (id INTEGER NOT NULL, pk %s NOT NULL, " + "kv %s "
                 + "CONSTRAINT PK_CONSTRAINT PRIMARY KEY (id, pk %s))";
-        String ddl = String.format(dmlFormat, sortOrder, inputSqlType, inputSqlType, sortOrder);
+        String ddl = String.format(dmlFormat,sortOrder, inputSqlType, inputSqlType, sortOrder);
         conn.createStatement().execute(ddl);
         conn.commit();
     }
@@ -479,13 +546,15 @@ public class TestUtil {
      * @param inputList
      *            list of values to be inserted into the pk column
      */
-    public static void initTables(Connection conn, String inputSqlType, List<Object> inputList) throws Exception {
-        createTable(conn, inputSqlType, "ASC");
-        createTable(conn, inputSqlType, "DESC");
+    public static String initTables(Connection conn, String inputSqlType, List<Object> inputList) throws Exception {
+        String tableName = generateUniqueName();
+        createTable(conn, inputSqlType, tableName, "ASC");
+        createTable(conn, inputSqlType, tableName, "DESC");
         for (int i = 0; i < inputList.size(); ++i) {
-            upsertRow(conn, "ASC", i, inputList.get(i));
-            upsertRow(conn, "DESC", i, inputList.get(i));
+            upsertRow(conn, tableName, "ASC", i, inputList.get(i));
+            upsertRow(conn, tableName, "DESC", i, inputList.get(i));
         }
+        return tableName;
     }
     
     public static List<KeyRange> getAllSplits(Connection conn, String tableName) throws SQLException {
@@ -542,20 +611,14 @@ public class TestUtil {
         }
         pstmt.execute();
         TableRef tableRef = pstmt.getQueryPlan().getTableRef();
-        PTableStats tableStats = tableRef.getTable().getTableStats();
-        return tableStats.getGuidePosts().values();
-    }
-
-    public static List<KeyRange> getSplits(Connection conn, byte[] lowerRange, byte[] upperRange) throws SQLException {
-        return getSplits(conn, STABLE_NAME, STABLE_PK_NAME, lowerRange, upperRange, null, "COUNT(*)");
-    }
-
-    public static List<KeyRange> getAllSplits(Connection conn) throws SQLException {
-        return getAllSplits(conn, STABLE_NAME);
+        PhoenixConnection pconn = conn.unwrap(PhoenixConnection.class);
+        PTable table = tableRef.getTable();
+        GuidePostsInfo info = pconn.getQueryServices().getTableStats(new GuidePostsKey(table.getName().getBytes(), SchemaUtil.getEmptyColumnFamily(table)));
+        return Collections.singletonList(info);
     }
 
     public static void analyzeTable(Connection conn, String tableName) throws IOException, SQLException {
-    	analyzeTable(conn, tableName, false);
+        analyzeTable(conn, tableName, false);
     }
     
     public static void analyzeTable(Connection conn, String tableName, boolean transactional) throws IOException, SQLException {
@@ -570,13 +633,8 @@ public class TestUtil {
         conn.createStatement().execute(query);
     }
     
-    public static void analyzeTableColumns(Connection conn) throws IOException, SQLException {
-        String query = "UPDATE STATISTICS " + STABLE_NAME+ " COLUMNS";
-        conn.createStatement().execute(query);
-    }
-    
-    public static void analyzeTable(Connection conn) throws IOException, SQLException {
-        String query = "UPDATE STATISTICS " + STABLE_NAME;
+    public static void analyzeTableColumns(Connection conn, String tableName) throws IOException, SQLException {
+        String query = "UPDATE STATISTICS " + tableName + " COLUMNS";
         conn.createStatement().execute(query);
     }
     
@@ -602,17 +660,17 @@ public class TestUtil {
         Date date = new Date(DateUtil.parseDate("2015-01-01 00:00:00").getTime() + (i - 1) * MILLIS_IN_DAY);
         stmt.setDate(6, date);
     }
-	
+    
     public static void validateRowKeyColumns(ResultSet rs, int i) throws SQLException {
-		assertTrue(rs.next());
-		assertEquals(rs.getString(1), "varchar" + String.valueOf(i));
-		assertEquals(rs.getString(2), "char" + String.valueOf(i));
-		assertEquals(rs.getInt(3), i);
-		assertEquals(rs.getInt(4), i);
-		assertEquals(rs.getBigDecimal(5), new BigDecimal(i*0.5d));
-		Date date = new Date(DateUtil.parseDate("2015-01-01 00:00:00").getTime() + (i - 1) * MILLIS_IN_DAY);
-		assertEquals(rs.getDate(6), date);
-	}
+        assertTrue(rs.next());
+        assertEquals(rs.getString(1), "varchar" + String.valueOf(i));
+        assertEquals(rs.getString(2), "char" + String.valueOf(i));
+        assertEquals(rs.getInt(3), i);
+        assertEquals(rs.getInt(4), i);
+        assertEquals(rs.getBigDecimal(5), new BigDecimal(i*0.5d));
+        Date date = new Date(DateUtil.parseDate("2015-01-01 00:00:00").getTime() + (i - 1) * MILLIS_IN_DAY);
+        assertEquals(rs.getDate(6), date);
+    }
     
     public static String getTableName(Boolean mutable, Boolean transactional) {
         StringBuilder tableNameBuilder = new StringBuilder(DEFAULT_DATA_TABLE_NAME);
@@ -622,5 +680,178 @@ public class TestUtil {
             tableNameBuilder.append(transactional ? "_TXN" : "_NON_TXN");
         return tableNameBuilder.toString();
     }
-}
 
+    public static ClientAggregators getSingleSumAggregator(String url, Properties props) throws SQLException {
+        try (PhoenixConnection pconn = DriverManager.getConnection(url, props).unwrap(PhoenixConnection.class)) {
+            PhoenixStatement statement = new PhoenixStatement(pconn);
+            StatementContext context = new StatementContext(statement, null, new Scan(), new SequenceManager(statement));
+            AggregationManager aggregationManager = context.getAggregationManager();
+            SumAggregateFunction func = new SumAggregateFunction(Arrays.<Expression>asList(new KeyValueColumnExpression(new PLongColumn() {
+                @Override
+                public PName getName() {
+                    return SINGLE_COLUMN_NAME;
+                }
+                @Override
+                public PName getFamilyName() {
+                    return SINGLE_COLUMN_FAMILY_NAME;
+                }
+                @Override
+                public int getPosition() {
+                    return 0;
+                }
+                
+                @Override
+                public SortOrder getSortOrder() {
+                    return SortOrder.getDefault();
+                }
+                
+                @Override
+                public Integer getArraySize() {
+                    return 0;
+                }
+                
+                @Override
+                public byte[] getViewConstant() {
+                    return null;
+                }
+                
+                @Override
+                public boolean isViewReferenced() {
+                    return false;
+                }
+                
+                @Override
+                public String getExpressionStr() {
+                    return null;
+                }
+                @Override
+                public boolean isRowTimestamp() {
+                    return false;
+                }
+                @Override
+                public boolean isDynamic() {
+                    return false;
+                }
+                @Override
+                public byte[] getColumnQualifierBytes() {
+                    return SINGLE_COLUMN_NAME.getBytes();
+                }
+            })), null);
+            aggregationManager.setAggregators(new ClientAggregators(Collections.<SingleAggregateFunction>singletonList(func), 1));
+            ClientAggregators aggregators = aggregationManager.getAggregators();
+            return aggregators;
+        }
+    }
+
+    public static void createMultiCFTestTable(Connection conn, String tableName, String options) throws SQLException {
+        String ddl = "create table if not exists " + tableName + "(" +
+                "   varchar_pk VARCHAR NOT NULL, " +
+                "   char_pk CHAR(5) NOT NULL, " +
+                "   int_pk INTEGER NOT NULL, "+ 
+                "   long_pk BIGINT NOT NULL, " +
+                "   decimal_pk DECIMAL(31, 10) NOT NULL, " +
+                "   a.varchar_col1 VARCHAR, " +
+                "   a.char_col1 CHAR(5), " +
+                "   a.int_col1 INTEGER, " +
+                "   a.long_col1 BIGINT, " +
+                "   a.decimal_col1 DECIMAL(31, 10), " +
+                "   b.varchar_col2 VARCHAR, " +
+                "   b.char_col2 CHAR(5), " +
+                "   b.int_col2 INTEGER, " +
+                "   b.long_col2 BIGINT, " +
+                "   b.decimal_col2 DECIMAL, " +
+                "   b.date_col DATE " + 
+                "   CONSTRAINT pk PRIMARY KEY (varchar_pk, char_pk, int_pk, long_pk DESC, decimal_pk)) "
+                + (options!=null? options : "");
+            conn.createStatement().execute(ddl);
+    }
+
+    /**
+     * Runs a major compaction, and then waits until the compaction is complete before returning.
+     *
+     * @param tableName name of the table to be compacted
+     */
+    public static void doMajorCompaction(Connection conn, String tableName) throws Exception {
+    
+        tableName = SchemaUtil.normalizeIdentifier(tableName);
+    
+        // We simply write a marker row, request a major compaction, and then wait until the marker
+        // row is gone
+        PhoenixConnection pconn = conn.unwrap(PhoenixConnection.class);
+        PTable table = pconn.getTable(new PTableKey(pconn.getTenantId(), tableName));
+        ConnectionQueryServices services = conn.unwrap(PhoenixConnection.class).getQueryServices();
+        MutationState mutationState = pconn.getMutationState();
+        if (table.isTransactional()) {
+            mutationState.startTransaction();
+        }
+        try (HTableInterface htable = mutationState.getHTable(table)) {
+            byte[] markerRowKey = Bytes.toBytes("TO_DELETE");
+           
+            Put put = new Put(markerRowKey);
+            put.add(QueryConstants.DEFAULT_COLUMN_FAMILY_BYTES, QueryConstants.EMPTY_COLUMN_VALUE_BYTES, QueryConstants.EMPTY_COLUMN_VALUE_BYTES);
+            htable.put(put);
+            Delete delete = new Delete(markerRowKey);
+            delete.deleteColumn(QueryConstants.DEFAULT_COLUMN_FAMILY_BYTES, QueryConstants.EMPTY_COLUMN_VALUE_BYTES);
+            htable.delete(delete);
+            htable.close();
+            if (table.isTransactional()) {
+                mutationState.commit();
+            }
+        
+            HBaseAdmin hbaseAdmin = services.getAdmin();
+            hbaseAdmin.flush(tableName);
+            hbaseAdmin.majorCompact(tableName);
+            hbaseAdmin.close();
+        
+            boolean compactionDone = false;
+            while (!compactionDone) {
+                Thread.sleep(6000L);
+                Scan scan = new Scan();
+                scan.setStartRow(markerRowKey);
+                scan.setStopRow(Bytes.add(markerRowKey, new byte[] { 0 }));
+                scan.setRaw(true);
+        
+                try (HTableInterface htableForRawScan = services.getTable(Bytes.toBytes(tableName))) {
+                    ResultScanner scanner = htableForRawScan.getScanner(scan);
+                    List<Result> results = Lists.newArrayList(scanner);
+                    LOG.info("Results: " + results);
+                    compactionDone = results.isEmpty();
+                    scanner.close();
+                }
+                LOG.info("Compaction done: " + compactionDone);
+                
+                // need to run compaction after the next txn snapshot has been written so that compaction can remove deleted rows
+                if (!compactionDone && table.isTransactional()) {
+                    hbaseAdmin = services.getAdmin();
+                    hbaseAdmin.flush(tableName);
+                    hbaseAdmin.majorCompact(tableName);
+                    hbaseAdmin.close();
+                }
+            }
+        }
+    }
+
+    public static void createTransactionalTable(Connection conn, String tableName) throws SQLException {
+        conn.createStatement().execute("create table " + tableName + TestUtil.TEST_TABLE_SCHEMA + "TRANSACTIONAL=true");
+    }
+
+    public static void dumpTable(HTableInterface table) throws IOException {
+        System.out.println("************ dumping " + table + " **************");
+        Scan s = new Scan();
+        s.setRaw(true);;
+        s.setMaxVersions();
+        try (ResultScanner scanner = table.getScanner(s)) {
+            Result result = null;
+            while ((result = scanner.next()) != null) {
+                CellScanner cellScanner = result.cellScanner();
+                Cell current = null;
+                while (cellScanner.advance()) {
+                    current = cellScanner.current();
+                    System.out.println(current);
+                }
+            }
+        }
+        System.out.println("-----------------------------------------------");
+    }
+
+}

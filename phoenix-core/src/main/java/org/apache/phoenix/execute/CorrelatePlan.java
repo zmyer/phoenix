@@ -21,13 +21,13 @@ import java.io.IOException;
 import java.sql.SQLException;
 import java.util.List;
 
+import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.phoenix.compile.ExplainPlan;
 import org.apache.phoenix.compile.QueryPlan;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.exception.SQLExceptionInfo;
 import org.apache.phoenix.execute.TupleProjector.ProjectedValueTuple;
-import org.apache.phoenix.iterate.DefaultParallelScanGrouper;
 import org.apache.phoenix.iterate.ParallelScanGrouper;
 import org.apache.phoenix.iterate.ResultIterator;
 import org.apache.phoenix.parse.JoinTableNode.JoinType;
@@ -98,12 +98,7 @@ public class CorrelatePlan extends DelegateQueryPlan {
     }
 
     @Override
-    public ResultIterator iterator() throws SQLException {
-        return iterator(DefaultParallelScanGrouper.getInstance());
-    }
-
-    @Override
-    public ResultIterator iterator(ParallelScanGrouper scanGrouper)
+    public ResultIterator iterator(final ParallelScanGrouper scanGrouper, final Scan scan)
             throws SQLException {
         return new ResultIterator() {
             private final ValueBitSet destBitSet = ValueBitSet.newInstance(joinedSchema);
@@ -112,7 +107,7 @@ public class CorrelatePlan extends DelegateQueryPlan {
                     (joinType == JoinType.Semi || joinType == JoinType.Anti) ?
                             ValueBitSet.EMPTY_VALUE_BITSET 
                           : ValueBitSet.newInstance(rhsSchema);
-            private final ResultIterator iter = delegate.iterator();
+            private final ResultIterator iter = delegate.iterator(scanGrouper, scan);
             private ResultIterator rhsIter = null;
             private Tuple current = null;
             private boolean closed = false;
@@ -164,7 +159,7 @@ public class CorrelatePlan extends DelegateQueryPlan {
                     joined = rhsBitSet == ValueBitSet.EMPTY_VALUE_BITSET ?
                             current : TupleProjector.mergeProjectedValue(
                                     convertLhs(current), joinedSchema, destBitSet,
-                                    rhsCurrent, rhsSchema, rhsBitSet, rhsFieldPosition);
+                                    rhsCurrent, rhsSchema, rhsBitSet, rhsFieldPosition, true);
                 } catch (IOException e) {
                     throw new SQLException(e);
                 }

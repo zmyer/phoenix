@@ -19,22 +19,6 @@ package org.apache.phoenix.hive.util;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.Maps;
-import org.apache.commons.logging.Log;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.util.Strings;
-import org.apache.hadoop.hive.metastore.api.Table;
-import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
-import org.apache.hadoop.hive.ql.io.AcidOutputFormat.Options;
-import org.apache.hadoop.hive.ql.plan.ExprNodeConstantDesc;
-import org.apache.hadoop.hive.ql.session.SessionState;
-import org.apache.hadoop.hive.serde.serdeConstants;
-import org.apache.hadoop.mapred.JobConf;
-import org.apache.hadoop.net.DNS;
-import org.apache.phoenix.hive.constants.PhoenixStorageHandlerConstants;
-import org.apache.phoenix.hive.ql.index.IndexSearchCondition;
-
-import javax.naming.NamingException;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -45,10 +29,31 @@ import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Properties;
+import javax.naming.NamingException;
+import org.apache.commons.logging.Log;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.HRegionLocation;
+import org.apache.hadoop.hbase.util.Strings;
+import org.apache.hadoop.hive.metastore.api.Table;
+import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
+import org.apache.hadoop.hive.ql.io.AcidOutputFormat.Options;
+import org.apache.hadoop.hive.ql.plan.ExprNodeConstantDesc;
+import org.apache.hadoop.hive.serde.serdeConstants;
+import org.apache.hadoop.hive.serde2.ColumnProjectionUtils;
+import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
+import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
+import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.net.DNS;
+import org.apache.phoenix.hive.constants.PhoenixStorageHandlerConstants;
+import org.apache.phoenix.hive.ql.index.IndexSearchCondition;
+import org.apache.phoenix.mapreduce.util.PhoenixConfigurationUtil;
 
 /**
  * Misc utils for PhoenixStorageHandler
@@ -75,7 +80,9 @@ public class PhoenixStorageHandlerUtil {
         DateFormat df = null;
 
         for (int i = 0, limit = values.length; i < limit; i++) {
-            if (serdeConstants.STRING_TYPE_NAME.equals(typeName)) {
+            if (serdeConstants.STRING_TYPE_NAME.equals(typeName) ||
+                    typeName.startsWith(serdeConstants.CHAR_TYPE_NAME) ||
+                    typeName.startsWith(serdeConstants.VARCHAR_TYPE_NAME)) {
                 results[i] = values[i];
             } else if (serdeConstants.INT_TYPE_NAME.equals(typeName)) {
                 results[i] = new Integer(values[i]);
@@ -182,26 +189,32 @@ public class PhoenixStorageHandlerUtil {
     }
 
     public static String getTableKeyOfSession(JobConf jobConf, String tableName) {
-        SessionState sessionState = SessionState.get();
 
-        String sessionId = sessionState.getSessionId();
-
+        String sessionId = jobConf.get(PhoenixConfigurationUtil.SESSION_ID);
         return new StringBuilder("[").append(sessionId).append("]-").append(tableName).toString();
     }
 
-    public static Map<String, String> createColumnTypeMap(JobConf jobConf) {
-        Map<String, String> columnTypeMap = Maps.newHashMap();
+    public static Map<String, TypeInfo> createColumnTypeMap(JobConf jobConf) {
+        Map<String, TypeInfo> columnTypeMap = Maps.newHashMap();
 
         String[] columnNames = jobConf.get(serdeConstants.LIST_COLUMNS).split
                 (PhoenixStorageHandlerConstants.COMMA);
-        String[] columnTypes = jobConf.get(serdeConstants.LIST_COLUMN_TYPES).split
-                (PhoenixStorageHandlerConstants.COMMA);
+        List<TypeInfo> typeInfos =
+                TypeInfoUtils.getTypeInfosFromTypeString(jobConf.get(serdeConstants.LIST_COLUMN_TYPES));
 
         for (int i = 0, limit = columnNames.length; i < limit; i++) {
-            columnTypeMap.put(columnNames[i], columnTypes[i]);
+            columnTypeMap.put(columnNames[i], typeInfos.get(i));
         }
 
         return columnTypeMap;
+    }
+
+    public static List<String> getReadColumnNames(Configuration conf) {
+        String colNames = conf.get(ColumnProjectionUtils.READ_COLUMN_NAMES_CONF_STR);
+        if (colNames != null && !colNames.isEmpty()) {
+            return Arrays.asList(colNames.split(PhoenixStorageHandlerConstants.COMMA));
+        }
+        return Collections.EMPTY_LIST;
     }
 
     public static boolean isTransactionalTable(Properties tableProperties) {

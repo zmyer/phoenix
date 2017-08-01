@@ -23,6 +23,7 @@ import java.util.Map;
 
 import org.apache.phoenix.hbase.index.util.IndexManagementUtil;
 import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
+import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.AmbiguousColumnException;
 import org.apache.phoenix.schema.AmbiguousTableException;
@@ -86,6 +87,7 @@ public enum SQLExceptionCode {
     SUBQUERY_RETURNS_DIFFERENT_NUMBER_OF_FIELDS(216, "22016", "Sub-query must return the same number of fields as the left-hand-side expression of 'IN'."),
     AMBIGUOUS_JOIN_CONDITION(217, "22017", "Ambiguous or non-equi join condition specified. Consider using table list with where clause."),
     CONSTRAINT_VIOLATION(218, "23018", "Constraint violation."),
+    SUBQUERY_SELECT_LIST_COLUMN_MUST_HAS_ALIAS(219,"23019","Every column in subquery select lists must has alias when used for join."),
 
     CONCURRENT_TABLE_MUTATION(301, "23000", "Concurrent modification to table.", new Factory() {
         @Override
@@ -180,6 +182,8 @@ public enum SQLExceptionCode {
      ROWTIMESTAMP_COL_INVALID_TYPE(530, "42907", "A column can be added as ROW_TIMESTAMP only if it is of type DATE, BIGINT, TIME OR TIMESTAMP."),
      ROWTIMESTAMP_NOT_ALLOWED_ON_VIEW(531, "42908", "Declaring a column as row_timestamp is not allowed for views."),
      INVALID_SCN(532, "42909", "Value of SCN cannot be less than zero."),
+     INVALID_REPLAY_AT(533, "42910", "Value of REPLAY_AT cannot be less than zero."),
+     UNEQUAL_SCN_AND_REPLAY_AT(534, "42911", "If both specified, values of CURRENT_SCN and REPLAY_AT must be equal."),
      /**
      * HBase and Phoenix specific implementation defined sub-classes.
      * Column family related exceptions.
@@ -190,7 +194,7 @@ public enum SQLExceptionCode {
     COLUMN_FAMILY_NOT_FOUND(1001, "42I01", "Undefined column family.", new Factory() {
         @Override
         public SQLException newException(SQLExceptionInfo info) {
-            return new ColumnFamilyNotFoundException(info.getFamilyName());
+            return new ColumnFamilyNotFoundException(info.getSchemaName(), info.getTableName(), info.getFamilyName());
         }
     }),
     PROPERTIES_FOR_FAMILY(1002, "42I02","Properties may not be defined for an unused family name."),
@@ -203,6 +207,7 @@ public enum SQLExceptionCode {
     NULLABLE_FIXED_WIDTH_LAST_PK(1023, "42J04", "Cannot add column to table when the last PK column is nullable and fixed width."),
     CANNOT_MODIFY_VIEW_PK(1036, "42J04", "Cannot modify the primary key of a VIEW if last PK column of parent is variable length."),
     BASE_TABLE_COLUMN(1037, "42J04", "Cannot modify columns of base table used by tenant-specific tables."),
+    UNALLOWED_COLUMN_FAMILY(1090, "42J04", "Column family names should not contain local index column prefix: "+QueryConstants.LOCAL_INDEX_COLUMN_FAMILY_PREFIX),
     // Key/value column related errors
     KEY_VALUE_NOT_NULL(1007, "42K01", "A key/value column may not be declared as not null."),
     // View related errors.
@@ -243,7 +248,8 @@ public enum SQLExceptionCode {
     INVALID_MUTABLE_INDEX_CONFIG(1029, "42Y88", "Mutable secondary indexes must have the "
             + IndexManagementUtil.WAL_EDIT_CODEC_CLASS_KEY + " property set to "
             +  IndexManagementUtil.INDEX_WAL_EDIT_CODEC_CLASS_NAME + " in the hbase-sites.xml of every region server."),
-
+    CANNOT_CREATE_DEFAULT(1031, "42Y90", "Cannot create column with a stateful default value."),
+    CANNOT_CREATE_DEFAULT_ROWTIMESTAMP(1032, "42Y90", "Cannot create ROW_TIMESTAMP column with a default value."),
 
     CANNOT_CREATE_TENANT_SPECIFIC_TABLE(1030, "42Y89", "Cannot create table for tenant-specific connection."),
     DEFAULT_COLUMN_FAMILY_ONLY_ON_CREATE_TABLE(1034, "42Y93", "Default column family may only be specified when creating a table."),
@@ -282,8 +288,11 @@ public enum SQLExceptionCode {
     CANNOT_ALTER_TO_BE_TXN_WITH_ROW_TIMESTAMP(1081, "44A12", "Cannot alter table to be transactional table if transactions are disabled."),
     TX_MUST_BE_ENABLED_TO_SET_TX_CONTEXT(1082, "44A13", "Cannot set transaction context if transactions are disabled."),
     TX_MUST_BE_ENABLED_TO_SET_AUTO_FLUSH(1083, "44A14", "Cannot set auto flush if transactions are disabled."),
-    TX_MUST_BE_ENABLED_TO_SET_ISOLATION_LEVEL(1084, "44A15", "Cannot set isolation level to TRANSACTION_READ_COMMITTED or TRANSACTION_SERIALIZABLE if transactions are disabled."),
+    TX_MUST_BE_ENABLED_TO_SET_ISOLATION_LEVEL(1084, "44A15", "Cannot set isolation level to TRANSACTION_REPEATABLE_READ if transactions are disabled."),
     TX_UNABLE_TO_GET_WRITE_FENCE(1085, "44A16", "Unable to obtain write fence for DDL operation."),
+    
+    SEQUENCE_NOT_CASTABLE_TO_AUTO_PARTITION_ID_COLUMN(1086, "44A17", "Sequence Value not castable to auto-partition id column"),
+    CANNOT_COERCE_AUTO_PARTITION_ID(1087, "44A18", "Auto-partition id cannot be coerced"),
 
     /** Sequence related */
     SEQUENCE_ALREADY_EXIST(1200, "42Z00", "Sequence already exists.", new Factory() {
@@ -314,6 +323,19 @@ public enum SQLExceptionCode {
     INCREMENT_BY_MUST_NOT_BE_ZERO(1214, "42Z14", "Sequence INCREMENT BY value cannot be zero."),
     NUM_SEQ_TO_ALLOCATE_MUST_BE_CONSTANT(1215, "42Z15", "Sequence NEXT n VALUES FOR must be a positive integer or constant." ),
     NUM_SEQ_TO_ALLOCATE_NOT_SUPPORTED(1216, "42Z16", "Sequence NEXT n VALUES FOR is not supported for Sequences with the CYCLE flag." ),
+    AUTO_PARTITION_SEQUENCE_UNDEFINED(1217, "42Z17", "Auto Partition Sequence undefined", new Factory() {
+        @Override
+        public SQLException newException(SQLExceptionInfo info) {
+            return new SequenceNotFoundException(info.getSchemaName(), info.getTableName());
+        }
+    }),
+    CANNOT_UPDATE_PK_ON_DUP_KEY(1218, "42Z18", "Primary key columns may not be udpated in ON DUPLICATE KEY UPDATE clause." ),
+    CANNOT_USE_ON_DUP_KEY_FOR_IMMUTABLE(1219, "42Z19", "The ON DUPLICATE KEY UPDATE clause may not be used for immutable tables." ),
+    CANNOT_USE_ON_DUP_KEY_FOR_TRANSACTIONAL(1220, "42Z20", "The ON DUPLICATE KEY UPDATE clause may not be used for transactional tables." ),
+    DUPLICATE_COLUMN_IN_ON_DUP_KEY(1221, "42Z21", "Duplicate column in ON DUPLICATE KEY UPDATE." ),
+    AGGREGATION_NOT_ALLOWED_IN_ON_DUP_KEY(1222, "42Z22", "Aggregation in ON DUPLICATE KEY UPDATE is not allowed." ),
+    CANNOT_SET_SCN_IN_ON_DUP_KEY(1223, "42Z23", "The CURRENT_SCN may not be set for statement using ON DUPLICATE KEY." ),
+    CANNOT_USE_ON_DUP_KEY_WITH_GLOBAL_IDX(1224, "42Z24", "The ON DUPLICATE KEY clause may not be used when a table has a global index." ),
 
     /** Parser error. (errorcode 06, sqlState 42P) */
     PARSER_ERROR(601, "42P00", "Syntax error.", Factory.SYNTAX_ERROR),
@@ -342,6 +364,18 @@ public enum SQLExceptionCode {
     CANNOT_SALT_LOCAL_INDEX(1110,"XCL10", "Local index may not be salted."),
 
     INDEX_FAILURE_BLOCK_WRITE(1120, "XCL20", "Writes to table blocked until index can be updated."),
+    
+    UPDATE_CACHE_FREQUENCY_INVALID(1130, "XCL30", "UPDATE_CACHE_FREQUENCY cannot be set to ALWAYS if APPEND_ONLY_SCHEMA is true."),
+    CANNOT_DROP_COL_APPEND_ONLY_SCHEMA(1131, "XCL31", "Cannot drop column from table that with append only schema."),
+    
+    CANNOT_ALTER_IMMUTABLE_ROWS_PROPERTY(1133, "XCL33", "IMMUTABLE_ROWS property can be changed only if the table storage scheme is ONE_CELL_PER_KEYVALUE_COLUMN"),
+    CANNOT_ALTER_TABLE_PROPERTY_ON_VIEW(1134, "XCL34", "Altering this table property on a view is not allowed"),
+    
+    IMMUTABLE_TABLE_PROPERTY_INVALID(1135, "XCL35", "IMMUTABLE table property cannot be used with CREATE IMMUTABLE TABLE statement "),
+    
+    MAX_COLUMNS_EXCEEDED(1136, "XCL36", "The number of columns exceed the maximum supported by the table's qualifier encoding scheme"),
+    INVALID_IMMUTABLE_STORAGE_SCHEME_AND_COLUMN_QUALIFIER_BYTES(1137, "XCL37", "If IMMUTABLE_STORAGE_SCHEME property is not set to ONE_CELL_PER_COLUMN COLUMN_ENCODED_BYTES cannot be 0"),
+    INVALID_IMMUTABLE_STORAGE_SCHEME_CHANGE(1138, "XCL38", "IMMUTABLE_STORAGE_SCHEME property cannot be changed from/to ONE_CELL_PER_COLUMN "),
 
     /**
      * Implementation defined class. Phoenix internal error. (errorcode 20, sqlstate INT).
@@ -355,6 +389,9 @@ public enum SQLExceptionCode {
     OUTDATED_JARS(2007, "INT09", "Outdated jars."),
     INDEX_METADATA_NOT_FOUND(2008, "INT10", "Unable to find cached index metadata. "),
     UNKNOWN_ERROR_CODE(2009, "INT11", "Unknown error code."),
+    CONCURRENT_UPGRADE_IN_PROGRESS(2010, "INT12", ""),
+    UPGRADE_REQUIRED(2011, "INT13", ""),
+    UPGRADE_NOT_REQUIRED(2012, "INT14", ""),
     OPERATION_TIMED_OUT(6000, "TIM01", "Operation timed out.", new Factory() {
         @Override
         public SQLException newException(SQLExceptionInfo info) {
@@ -389,10 +426,17 @@ public enum SQLExceptionCode {
             return new SchemaNotFoundException(info.getSchemaName());
         }
     }), CANNOT_MUTATE_SCHEMA(723, "43M06", "Cannot mutate schema as schema has existing tables"), SCHEMA_NOT_ALLOWED(
-            724, "43M07",
-            "Schema name not allowed!!"), CREATE_SCHEMA_NOT_ALLOWED(725, "43M08", "Cannot create schema because config "
-                    + QueryServices.IS_NAMESPACE_MAPPING_ENABLED + " for enabling name space mapping isn't enabled.");
-
+            724, "43M07", "Schema name not allowed!!"), CREATE_SCHEMA_NOT_ALLOWED(725, "43M08",
+                    "Cannot create schema because config " + QueryServices.IS_NAMESPACE_MAPPING_ENABLED
+                            + " for enabling name space mapping isn't enabled."), INCONSISTENET_NAMESPACE_MAPPING_PROPERTIES(
+                                    726, "43M10", " Inconsistent namespace mapping properites.."), ASYNC_NOT_ALLOWED(
+                                    727, "43M11", " ASYNC option is not allowed.. "),
+    NEW_CONNECTION_THROTTLED(728, "410M1", "Could not create connection " +
+        "because this client already has the maximum number" +
+        " of connections to the target cluster."),
+    
+    MAX_MUTATION_SIZE_EXCEEDED(729, "LIM01", "MutationState size is bigger than maximum allowed number of rows"),
+    MAX_MUTATION_SIZE_BYTES_EXCEEDED(730, "LIM02", "MutationState size is bigger than maximum allowed number of bytes");
 
     private final int errorCode;
     private final String sqlState;

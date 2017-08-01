@@ -39,7 +39,7 @@ import org.junit.Test;
 import com.google.common.collect.Maps;
 
 
-public class CountDistinctCompressionIT extends BaseOwnClusterHBaseManagedTimeIT {
+public class CountDistinctCompressionIT extends BaseUniqueNamesOwnClusterIT {
     @BeforeClass
     public static void doSetup() throws Exception {
         Map<String, String> props = Maps.newHashMapWithExpectedSize(3);
@@ -51,9 +51,9 @@ public class CountDistinctCompressionIT extends BaseOwnClusterHBaseManagedTimeIT
     @Test
     public void testDistinctCountOnColumn() throws Exception {
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, getDefaultSplits(tenantId), (Date)null, getUrl());
+        String tableName = initATableValues(null, tenantId, getDefaultSplits(tenantId), (Date)null, null, getUrl(), null);
 
-        String query = "SELECT count(DISTINCT A_STRING) FROM aTable";
+        String query = "SELECT count(DISTINCT A_STRING) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);

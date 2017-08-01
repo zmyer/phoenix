@@ -20,6 +20,7 @@ package org.apache.phoenix.jdbc;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static java.util.Collections.emptyMap;
 import static org.apache.phoenix.monitoring.GlobalClientMetrics.GLOBAL_OPEN_PHOENIX_CONNECTIONS;
+import static org.apache.phoenix.monitoring.GlobalClientMetrics.GLOBAL_PHOENIX_CONNECTIONS_ATTEMPTED_COUNTER;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -58,8 +59,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import co.cask.tephra.TransactionContext;
-
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.client.Consistency;
 import org.apache.htrace.Sampler;
@@ -76,6 +75,7 @@ import org.apache.phoenix.iterate.ParallelIteratorFactory;
 import org.apache.phoenix.iterate.TableResultIterator;
 import org.apache.phoenix.iterate.TableResultIteratorFactory;
 import org.apache.phoenix.jdbc.PhoenixStatement.PhoenixStatementParser;
+import org.apache.phoenix.monitoring.MetricType;
 import org.apache.phoenix.parse.PFunction;
 import org.apache.phoenix.parse.PSchema;
 import org.apache.phoenix.query.ConnectionQueryServices;
@@ -105,6 +105,7 @@ import org.apache.phoenix.schema.types.PUnsignedDate;
 import org.apache.phoenix.schema.types.PUnsignedTime;
 import org.apache.phoenix.schema.types.PUnsignedTimestamp;
 import org.apache.phoenix.trace.util.Tracing;
+import org.apache.phoenix.transaction.PhoenixTransactionContext;
 import org.apache.phoenix.util.DateUtil;
 import org.apache.phoenix.util.JDBCUtil;
 import org.apache.phoenix.util.NumberUtil;
@@ -143,9 +144,11 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     private final Properties info;
     private final Map<PDataType<?>, Format> formatters = new HashMap<>();
     private final int mutateBatchSize;
+    private final long mutateBatchSizeBytes;
     private final Long scn;
+    private final boolean replayMutations;
     private MutationState mutationState;
-    private List<SQLCloseable> statements = new ArrayList<SQLCloseable>();
+    private List<PhoenixStatement> statements = new ArrayList<>();
     private boolean isAutoFlush = false;
     private boolean isAutoCommit = false;
     private PMetaData metaData;
@@ -165,6 +168,7 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     private ParallelIteratorFactory parallelIteratorFactory;
     private final LinkedBlockingQueue<WeakReference<TableResultIterator>> scannerQueue;
     private TableResultIteratorFactory tableResultIteratorFactory;
+    private boolean isRunningUpgrade;
     
     static {
         Tracing.addTraceMetricsSource();
@@ -176,8 +180,8 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         return props;
     }
 
-    public PhoenixConnection(PhoenixConnection connection, boolean isDescRowKeyOrderUpgrade) throws SQLException {
-        this(connection.getQueryServices(), connection.getURL(), connection.getClientInfo(), connection.metaData, connection.getMutationState(), isDescRowKeyOrderUpgrade);
+    public PhoenixConnection(PhoenixConnection connection, boolean isDescRowKeyOrderUpgrade, boolean isRunningUpgrade) throws SQLException {
+        this(connection.getQueryServices(), connection.getURL(), connection.getClientInfo(), connection.metaData, connection.getMutationState(), isDescRowKeyOrderUpgrade, isRunningUpgrade, connection.replayMutations);
         this.isAutoCommit = connection.isAutoCommit;
         this.isAutoFlush = connection.isAutoFlush;
         this.sampler = connection.sampler;
@@ -185,11 +189,11 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     }
 
     public PhoenixConnection(PhoenixConnection connection) throws SQLException {
-        this(connection, connection.isDescVarLengthRowKeyUpgrade());
+        this(connection, connection.isDescVarLengthRowKeyUpgrade(), connection.isRunningUpgrade());
     }
     
     public PhoenixConnection(PhoenixConnection connection, MutationState mutationState) throws SQLException {
-        this(connection.getQueryServices(), connection.getURL(), connection.getClientInfo(), connection.getMetaDataCache(), mutationState, connection.isDescVarLengthRowKeyUpgrade());
+        this(connection.getQueryServices(), connection.getURL(), connection.getClientInfo(), connection.getMetaDataCache(), mutationState, connection.isDescVarLengthRowKeyUpgrade(), connection.isRunningUpgrade(), connection.replayMutations);
     }
     
     public PhoenixConnection(PhoenixConnection connection, long scn) throws SQLException {
@@ -197,7 +201,7 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     }
     
     public PhoenixConnection(ConnectionQueryServices services, PhoenixConnection connection, long scn) throws SQLException {
-        this(services, connection.getURL(), newPropsWithSCN(scn,connection.getClientInfo()), connection.metaData, connection.getMutationState(), connection.isDescVarLengthRowKeyUpgrade());
+        this(services, connection.getURL(), newPropsWithSCN(scn,connection.getClientInfo()), connection.metaData, connection.getMutationState(), connection.isDescVarLengthRowKeyUpgrade(), connection.isRunningUpgrade(), connection.replayMutations);
         this.isAutoCommit = connection.isAutoCommit;
         this.isAutoFlush = connection.isAutoFlush;
         this.sampler = connection.sampler;
@@ -205,14 +209,15 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     }
     
     public PhoenixConnection(ConnectionQueryServices services, String url, Properties info, PMetaData metaData) throws SQLException {
-        this(services, url, info, metaData, null, false);
+        this(services, url, info, metaData, null, false, false, false);
     }
     
     public PhoenixConnection(PhoenixConnection connection, ConnectionQueryServices services, Properties info) throws SQLException {
-        this(services, connection.url, info, connection.metaData, null, connection.isDescVarLengthRowKeyUpgrade());
+        this(services, connection.url, info, connection.metaData, null, connection.isDescVarLengthRowKeyUpgrade(), connection.isRunningUpgrade(), connection.replayMutations);
     }
     
-    public PhoenixConnection(ConnectionQueryServices services, String url, Properties info, PMetaData metaData, MutationState mutationState, boolean isDescVarLengthRowKeyUpgrade) throws SQLException {
+    private PhoenixConnection(ConnectionQueryServices services, String url, Properties info, PMetaData metaData, MutationState mutationState, boolean isDescVarLengthRowKeyUpgrade, boolean isRunningUpgrade, boolean replayMutations) throws SQLException {
+        GLOBAL_PHOENIX_CONNECTIONS_ATTEMPTED_COUNTER.increment();
         this.url = url;
         this.isDescVarLengthRowKeyUpgrade = isDescVarLengthRowKeyUpgrade;
         // Copy so client cannot change
@@ -238,7 +243,12 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         
         Long scnParam = JDBCUtil.getCurrentSCN(url, this.info);
         checkScn(scnParam);
-        this.scn = scnParam;
+        Long replayAtParam = JDBCUtil.getReplayAt(url, this.info);
+        checkReplayAt(replayAtParam);
+        checkScnAndReplayAtEquality(scnParam,replayAtParam);
+        
+        this.scn = scnParam != null ? scnParam : replayAtParam;
+        this.replayMutations = replayMutations || replayAtParam != null;
         this.isAutoFlush = this.services.getProps().getBoolean(QueryServices.TRANSACTIONS_ENABLED, QueryServicesOptions.DEFAULT_TRANSACTIONS_ENABLED)
                 && this.services.getProps().getBoolean(QueryServices.AUTO_FLUSH_ATTRIB, QueryServicesOptions.DEFAULT_AUTO_FLUSH) ;
         this.isAutoCommit = JDBCUtil.getAutoCommit(
@@ -255,11 +265,13 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
                 this.services.getProps().get(QueryServices.SCHEMA_ATTRIB, QueryServicesOptions.DEFAULT_SCHEMA));
         this.tenantId = tenantId;
         this.mutateBatchSize = JDBCUtil.getMutateBatchSize(url, this.info, this.services.getProps());
+        this.mutateBatchSizeBytes = JDBCUtil.getMutateBatchSizeBytes(url, this.info, this.services.getProps());
         datePattern = this.services.getProps().get(QueryServices.DATE_FORMAT_ATTRIB, DateUtil.DEFAULT_DATE_FORMAT);
         timePattern = this.services.getProps().get(QueryServices.TIME_FORMAT_ATTRIB, DateUtil.DEFAULT_TIME_FORMAT);
         timestampPattern = this.services.getProps().get(QueryServices.TIMESTAMP_FORMAT_ATTRIB, DateUtil.DEFAULT_TIMESTAMP_FORMAT);
         String numberPattern = this.services.getProps().get(QueryServices.NUMBER_FORMAT_ATTRIB, NumberUtil.DEFAULT_NUMBER_FORMAT);
         int maxSize = this.services.getProps().getInt(QueryServices.MAX_MUTATION_SIZE_ATTRIB,QueryServicesOptions.DEFAULT_MAX_MUTATION_SIZE);
+        int maxSizeBytes = this.services.getProps().getInt(QueryServices.MAX_MUTATION_SIZE_BYTES_ATTRIB,QueryServicesOptions.DEFAULT_MAX_MUTATION_SIZE_BYTES);
         Format dateFormat = DateUtil.getDateFormatter(datePattern);
         Format timeFormat = DateUtil.getDateFormatter(timePattern);
         Format timestampFormat = DateUtil.getDateFormatter(timestampPattern);
@@ -279,20 +291,21 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
                 long maxTimestamp = scn == null ? HConstants.LATEST_TIMESTAMP : scn;
                 return (table.getType() != PTableType.SYSTEM && 
                         (  table.getTimeStamp() >= maxTimestamp || 
-                         ! Objects.equal(tenantId, table.getTenantId())) );
+                         (table.getTenantId()!=null && ! Objects.equal(tenantId, table.getTenantId()))));
             }
             
             @Override
             public boolean prune(PFunction function) {
                 long maxTimestamp = scn == null ? HConstants.LATEST_TIMESTAMP : scn;
                 return ( function.getTimeStamp() >= maxTimestamp ||
-                         ! Objects.equal(tenantId, function.getTenantId()));
+                        (function.getTenantId()!=null && ! Objects.equal(tenantId, function.getTenantId())));
             }
         };
         this.isRequestLevelMetricsEnabled = JDBCUtil.isCollectingRequestLevelMetricsEnabled(url, info, this.services.getProps());
-        this.mutationState = mutationState == null ? newMutationState(maxSize) : new MutationState(mutationState);
-        this.metaData = metaData.pruneTables(pruner);
-        this.metaData = metaData.pruneFunctions(pruner);
+        this.mutationState = mutationState == null ? newMutationState(maxSize, maxSizeBytes) : new MutationState(mutationState);
+        this.metaData = metaData;
+        this.metaData.pruneTables(pruner);
+        this.metaData.pruneFunctions(pruner);
         this.services.addConnection(this);
 
         // setup tracing, if its enabled
@@ -300,12 +313,25 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         this.customTracingAnnotations = getImmutableCustomTracingAnnotations();
         this.scannerQueue = new LinkedBlockingQueue<>();
         this.tableResultIteratorFactory = new DefaultTableResultIteratorFactory();
+        this.isRunningUpgrade = isRunningUpgrade;
         GLOBAL_OPEN_PHOENIX_CONNECTIONS.increment();
     }
     
     private static void checkScn(Long scnParam) throws SQLException {
         if (scnParam != null && scnParam < 0) {
             throw new SQLExceptionInfo.Builder(SQLExceptionCode.INVALID_SCN).build().buildException();
+        }
+    }
+
+    private static void checkReplayAt(Long replayAtParam) throws SQLException {
+        if (replayAtParam != null && replayAtParam < 0) {
+            throw new SQLExceptionInfo.Builder(SQLExceptionCode.INVALID_REPLAY_AT).build().buildException();
+        }
+    }
+
+    private static void checkScnAndReplayAtEquality(Long scnParam, Long replayAt) throws SQLException {
+        if (scnParam != null && replayAt != null && !scnParam.equals(replayAt)) {
+            throw new SQLExceptionInfo.Builder(SQLExceptionCode.UNEQUAL_SCN_AND_REPLAY_AT).build().buildException();
         }
     }
 
@@ -438,10 +464,18 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         return scn;
     }
     
+    public boolean isReplayMutations() {
+        return replayMutations;
+    }
+    
     public int getMutateBatchSize() {
         return mutateBatchSize;
     }
-    
+
+    public long getMutateBatchSizeBytes(){
+        return mutateBatchSizeBytes;
+    }
+
     public PMetaData getMetaDataCache() {
         return metaData;
     }
@@ -454,8 +488,8 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     	return metaData.getTableRef(key);
     }
 
-    protected MutationState newMutationState(int maxSize) {
-        return new MutationState(maxSize, this); 
+    protected MutationState newMutationState(int maxSize, int maxSizeBytes) {
+        return new MutationState(maxSize, maxSizeBytes, this);
     }
     
     public MutationState getMutationState() {
@@ -483,7 +517,7 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     }
 
     private void closeStatements() throws SQLException {
-        List<SQLCloseable> statements = this.statements;
+        List<? extends PhoenixStatement> statements = this.statements;
         // create new list to prevent close of statements
         // from modifying this list.
         this.statements = Lists.newArrayList();
@@ -559,6 +593,10 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         throw new SQLFeatureNotSupportedException();
     }
 
+    public List<PhoenixStatement> getStatements() {
+        return statements;
+    }
+    
     @Override
     public Statement createStatement() throws SQLException {
         PhoenixStatement statement = new PhoenixStatement(this);
@@ -621,13 +659,13 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         mutationState.sendUncommitted();
     }
         
-    public void setTransactionContext(TransactionContext txContext) throws SQLException {
+    public void setTransactionContext(PhoenixTransactionContext txContext) throws SQLException {
         if (!this.services.getProps().getBoolean(QueryServices.TRANSACTIONS_ENABLED, QueryServicesOptions.DEFAULT_TRANSACTIONS_ENABLED)) {
             throw new SQLExceptionInfo.Builder(SQLExceptionCode.TX_MUST_BE_ENABLED_TO_SET_TX_CONTEXT)
             .build().buildException();
         }
         this.mutationState.rollback();
-        this.mutationState = new MutationState(this.mutationState.getMaxSize(), this, txContext);
+        this.mutationState = new MutationState(this.mutationState.getMaxSize(), this.mutationState.getMaxSizeBytes(), this, txContext);
         
         // Write data to HBase after each statement execution as the commit may not
         // come through Phoenix APIs.
@@ -669,7 +707,7 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         boolean transactionsEnabled = getQueryServices().getProps().getBoolean(QueryServices.TRANSACTIONS_ENABLED, 
                 QueryServicesOptions.DEFAULT_TRANSACTIONS_ENABLED);
         return  transactionsEnabled ?
-                Connection.TRANSACTION_SERIALIZABLE : Connection.TRANSACTION_READ_COMMITTED;
+                Connection.TRANSACTION_REPEATABLE_READ : Connection.TRANSACTION_READ_COMMITTED;
     }
 
     @Override
@@ -835,7 +873,10 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     public void setTransactionIsolation(int level) throws SQLException {
         boolean transactionsEnabled = getQueryServices().getProps().getBoolean(QueryServices.TRANSACTIONS_ENABLED, 
                 QueryServicesOptions.DEFAULT_TRANSACTIONS_ENABLED);
-        if (!transactionsEnabled && (level == Connection.TRANSACTION_REPEATABLE_READ || level == Connection.TRANSACTION_SERIALIZABLE)) {
+        if (level == Connection.TRANSACTION_SERIALIZABLE) {
+            throw new SQLFeatureNotSupportedException();
+        }
+        if (!transactionsEnabled && level == Connection.TRANSACTION_REPEATABLE_READ) {
             throw new SQLExceptionInfo.Builder(SQLExceptionCode.TX_MUST_BE_ENABLED_TO_SET_ISOLATION_LEVEL)
             .build().buildException();
         }
@@ -896,79 +937,57 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     }
     
     @Override
-    public PMetaData addTable(PTable table, long resolvedTime) throws SQLException {
-        metaData = metaData.addTable(table, resolvedTime);
+    public void addTable(PTable table, long resolvedTime) throws SQLException {
+        metaData.addTable(table, resolvedTime);
         //Cascade through to connectionQueryServices too
         getQueryServices().addTable(table, resolvedTime);
-        return metaData;
     }
     
     @Override
-    public PMetaData updateResolvedTimestamp(PTable table, long resolvedTime) throws SQLException {
-    	metaData = metaData.updateResolvedTimestamp(table, resolvedTime);
+    public void updateResolvedTimestamp(PTable table, long resolvedTime) throws SQLException {
+    	metaData.updateResolvedTimestamp(table, resolvedTime);
     	//Cascade through to connectionQueryServices too
         getQueryServices().updateResolvedTimestamp(table, resolvedTime);
-        return metaData;
     }
     
     @Override
-    public PMetaData addFunction(PFunction function) throws SQLException {
+    public void addFunction(PFunction function) throws SQLException {
         // TODO: since a connection is only used by one thread at a time,
         // we could modify this metadata in place since it's not shared.
         if (scn == null || scn > function.getTimeStamp()) {
-            metaData = metaData.addFunction(function);
+            metaData.addFunction(function);
         }
         //Cascade through to connectionQueryServices too
         getQueryServices().addFunction(function);
-        return metaData;
     }
 
     @Override
-    public PMetaData addSchema(PSchema schema) throws SQLException {
-        metaData = metaData.addSchema(schema);
+    public void addSchema(PSchema schema) throws SQLException {
+        metaData.addSchema(schema);
         // Cascade through to connectionQueryServices too
         getQueryServices().addSchema(schema);
-        return metaData;
     }
 
     @Override
-    public PMetaData addColumn(PName tenantId, String tableName, List<PColumn> columns, long tableTimeStamp,
-            long tableSeqNum, boolean isImmutableRows, boolean isWalDisabled, boolean isMultitenant, boolean storeNulls,
-            boolean isTransactional, long updateCacheFrequency, boolean isNamespaceMapped, long resolvedTime)
-                    throws SQLException {
-        metaData = metaData.addColumn(tenantId, tableName, columns, tableTimeStamp, tableSeqNum, isImmutableRows,
-                isWalDisabled, isMultitenant, storeNulls, isTransactional, updateCacheFrequency, isNamespaceMapped,
-                resolvedTime);
-        // Cascade through to connectionQueryServices too
-        getQueryServices().addColumn(tenantId, tableName, columns, tableTimeStamp, tableSeqNum, isImmutableRows,
-                isWalDisabled, isMultitenant, storeNulls, isTransactional, updateCacheFrequency, isNamespaceMapped,
-                resolvedTime);
-        return metaData;
-    }
-
-    @Override
-    public PMetaData removeTable(PName tenantId, String tableName, String parentTableName, long tableTimeStamp) throws SQLException {
-        metaData = metaData.removeTable(tenantId, tableName, parentTableName, tableTimeStamp);
+    public void removeTable(PName tenantId, String tableName, String parentTableName, long tableTimeStamp) throws SQLException {
+        metaData.removeTable(tenantId, tableName, parentTableName, tableTimeStamp);
         //Cascade through to connectionQueryServices too
         getQueryServices().removeTable(tenantId, tableName, parentTableName, tableTimeStamp);
-        return metaData;
     }
 
     @Override
-    public PMetaData removeFunction(PName tenantId, String functionName, long tableTimeStamp) throws SQLException {
-        metaData = metaData.removeFunction(tenantId, functionName, tableTimeStamp);
+    public void removeFunction(PName tenantId, String functionName, long tableTimeStamp) throws SQLException {
+        metaData.removeFunction(tenantId, functionName, tableTimeStamp);
         //Cascade through to connectionQueryServices too
         getQueryServices().removeFunction(tenantId, functionName, tableTimeStamp);
-        return metaData;
     }
 
     @Override
-    public PMetaData removeColumn(PName tenantId, String tableName, List<PColumn> columnsToRemove, long tableTimeStamp,
+    public void removeColumn(PName tenantId, String tableName, List<PColumn> columnsToRemove, long tableTimeStamp,
             long tableSeqNum, long resolvedTime) throws SQLException {
-        metaData = metaData.removeColumn(tenantId, tableName, columnsToRemove, tableTimeStamp, tableSeqNum, resolvedTime);
+        metaData.removeColumn(tenantId, tableName, columnsToRemove, tableTimeStamp, tableSeqNum, resolvedTime);
         //Cascade through to connectionQueryServices too
         getQueryServices().removeColumn(tenantId, tableName, columnsToRemove, tableTimeStamp, tableSeqNum, resolvedTime);
-        return metaData;
     }
 
     protected boolean removeStatement(PhoenixStatement statement) throws SQLException {
@@ -1002,12 +1021,12 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         this.traceScope = traceScope;
     }
     
-    public Map<String, Map<String, Long>> getMutationMetrics() {
+    public Map<String, Map<MetricType, Long>> getMutationMetrics() {
         return mutationState.getMutationMetricQueue().aggregate();
     }
     
-    public Map<String, Map<String, Long>> getReadMetrics() {
-        return mutationState.getReadMetricQueue() != null ? mutationState.getReadMetricQueue().aggregate() : Collections.<String, Map<String, Long>>emptyMap();
+    public Map<String, Map<MetricType, Long>> getReadMetrics() {
+        return mutationState.getReadMetricQueue() != null ? mutationState.getReadMetricQueue().aggregate() : Collections.<String, Map<MetricType, Long>>emptyMap();
     }
     
     public boolean isRequestLevelMetricsEnabled() {
@@ -1068,11 +1087,19 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     }
 
     @Override
-    public PMetaData removeSchema(PSchema schema, long schemaTimeStamp) {
-        metaData = metaData.removeSchema(schema, schemaTimeStamp);
+    public void removeSchema(PSchema schema, long schemaTimeStamp) {
+        metaData.removeSchema(schema, schemaTimeStamp);
         // Cascade through to connectionQueryServices too
         getQueryServices().removeSchema(schema, schemaTimeStamp);
-        return metaData;
 
     }
+    
+    public boolean isRunningUpgrade() {
+        return isRunningUpgrade;
+    }
+    
+    public void setRunningUpgrade(boolean isRunningUpgrade) {
+        this.isRunningUpgrade = isRunningUpgrade;
+    }
+    
 }

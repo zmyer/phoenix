@@ -29,7 +29,6 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Map;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -37,28 +36,22 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapred.FileAlreadyExistsException;
 import org.apache.phoenix.mapreduce.CsvBulkLoadTool;
-import org.apache.phoenix.query.QueryServices;
-import org.apache.phoenix.query.QueryServicesOptions;
 import org.apache.phoenix.util.DateUtil;
+import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.ReadOnlyProps;
+import org.apache.phoenix.util.TestUtil;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.google.common.collect.Maps;
-
-public class CsvBulkLoadToolIT extends BaseOwnClusterHBaseManagedTimeIT {
+public class CsvBulkLoadToolIT extends BaseOwnClusterIT {
 
     private static Connection conn;
     private static String zkQuorum;
 
     @BeforeClass
     public static void doSetup() throws Exception {
-        Map<String, String> serverProps = Maps.newHashMapWithExpectedSize(1);
-        serverProps.put(QueryServices.EXTRA_JDBC_ARGUMENTS_ATTRIB, QueryServicesOptions.DEFAULT_EXTRA_JDBC_ARGUMENTS);
-        Map<String, String> clientProps = Maps.newHashMapWithExpectedSize(1);
-        clientProps.put(QueryServices.TRANSACTIONS_ENABLED, "true");
-        setUpRealDriver(new ReadOnlyProps(serverProps.entrySet().iterator()), new ReadOnlyProps(clientProps.entrySet().iterator()));
-        zkQuorum = "localhost:" + getUtility().getZkCluster().getClientPort();
+        setUpTestDriver(ReadOnlyProps.EMPTY_PROPS);
+        zkQuorum = TestUtil.LOCALHOST + PhoenixRuntime.JDBC_PROTOCOL_SEPARATOR + getUtility().getZkCluster().getClientPort();
         conn = DriverManager.getConnection(getUrl());
     }
 
@@ -277,6 +270,10 @@ public class CsvBulkLoadToolIT extends BaseOwnClusterHBaseManagedTimeIT {
         assertEquals(2, rs.getInt(1));
         assertEquals("FirstName 2", rs.getString(2));
 
+        rs = stmt.executeQuery("SELECT LAST_NAME FROM TABLE6  where last_name='LastName 1'");
+        assertTrue(rs.next());
+        assertEquals("LastName 1", rs.getString(1));
+
         rs.close();
         stmt.close();
     }
@@ -374,5 +371,41 @@ public class CsvBulkLoadToolIT extends BaseOwnClusterHBaseManagedTimeIT {
         } catch (Exception ex) {
             assertTrue(ex instanceof FileAlreadyExistsException); 
         }
+    }
+
+    @Test
+    public void testImportInImmutableTable() throws Exception {
+        Statement stmt = conn.createStatement();
+        stmt.execute("CREATE IMMUTABLE TABLE S.TABLE10 (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR, T DATE, CF1.T2 DATE, CF2.T3 DATE) ");
+
+        FileSystem fs = FileSystem.get(getUtility().getConfiguration());
+        FSDataOutputStream outputStream = fs.create(new Path("/tmp/input10.csv"));
+        PrintWriter printWriter = new PrintWriter(outputStream);
+        printWriter.println("1,Name 1,1970/01/01,1970/02/01,1970/03/01");
+        printWriter.println("2,Name 2,1970/01/02,1970/02/02,1970/03/02");
+        printWriter.close();
+        CsvBulkLoadTool csvBulkLoadTool = new CsvBulkLoadTool();
+        csvBulkLoadTool.setConf(new Configuration(getUtility().getConfiguration()));
+        csvBulkLoadTool.getConf().set(DATE_FORMAT_ATTRIB, "yyyy/MM/dd");
+        int exitCode = csvBulkLoadTool.run(new String[] { "--input", "/tmp/input10.csv", "--table", "table10",
+                "--schema", "s", "--zookeeper", zkQuorum });
+        assertEquals(0, exitCode);
+        ResultSet rs = stmt.executeQuery("SELECT id, name, t, CF1.T2, CF2.T3 FROM s.table10 ORDER BY id");
+        assertTrue(rs.next());
+        assertEquals(1, rs.getInt(1));
+        assertEquals("Name 1", rs.getString(2));
+        assertEquals(DateUtil.parseDate("1970-01-01"), rs.getDate(3));
+        assertEquals(DateUtil.parseDate("1970-02-01"), rs.getDate(4));
+        assertEquals(DateUtil.parseDate("1970-03-01"), rs.getDate(5));
+        assertTrue(rs.next());
+        assertEquals(2, rs.getInt(1));
+        assertEquals("Name 2", rs.getString(2));
+        assertEquals(DateUtil.parseDate("1970-01-02"), rs.getDate(3));
+        assertEquals(DateUtil.parseDate("1970-02-02"), rs.getDate(4));
+        assertEquals(DateUtil.parseDate("1970-03-02"), rs.getDate(5));
+        assertFalse(rs.next());
+
+        rs.close();
+        stmt.close();
     }
 }

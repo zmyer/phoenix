@@ -40,7 +40,7 @@ import com.google.common.primitives.Doubles;
 import com.google.common.primitives.Floats;
 
 
-public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
+public class ArithmeticQueryIT extends ParallelStatsDisabledIT {
 
     @Test
     public void testDecimalUpsertValue() throws Exception {
@@ -48,7 +48,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String testDecimalArithmetic = generateRandomString();
+            String testDecimalArithmetic = generateUniqueName();
             String ddl = "CREATE TABLE " + testDecimalArithmetic +
                     "  (pk VARCHAR NOT NULL PRIMARY KEY, " +
                     "col1 DECIMAL(31,0), col2 DECIMAL(5), col3 DECIMAL(5,2), col4 DECIMAL)";
@@ -139,11 +139,11 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String source = generateRandomString();
+            String source = generateUniqueName();
             String ddl = "CREATE TABLE " + source +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col1 DECIMAL(5,2), col2 DECIMAL(5,1), col3 DECIMAL(5,2), col4 DECIMAL(4,4))";
             createTestTable(getUrl(), ddl);
-            String target = generateRandomString();
+            String target = generateUniqueName();
             ddl = "CREATE TABLE " + target +
                     " (pk VARCHAR NOT NULL PRIMARY KEY, col1 DECIMAL(5,1), col2 DECIMAL(5,2), col3 DECIMAL(4,4))";
             createTestTable(getUrl(), ddl);
@@ -225,11 +225,16 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
             assertTrue(rs.next());
             assertEquals(new BigDecimal("100.3"), rs.getBigDecimal(1));
             assertFalse(rs.next());
-            // source and target in same table, values scheme incompatible.
+            // source and target in same table, values scheme incompatible. should throw
             query = "UPSERT INTO " + source + "(pk, col4) SELECT pk, col1 from " + source;
             stmt = conn.prepareStatement(query);
-            stmt.execute();
-            conn.commit();
+            try {
+                stmt.execute();
+                conn.commit();
+                fail();
+            } catch (SQLException e) {
+                assertEquals(SQLExceptionCode.DATA_EXCEEDS_MAX_CAPACITY.getErrorCode(), e.getErrorCode());
+            }
             query = "SELECT col4 FROM " + source;
             stmt = conn.prepareStatement(query);
             rs = stmt.executeQuery();
@@ -249,7 +254,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String testDecimalArithmetic = generateRandomString();
+            String testDecimalArithmetic = generateUniqueName();
             String ddl = "CREATE TABLE " + testDecimalArithmetic +
                     "  (pk VARCHAR NOT NULL PRIMARY KEY, col1 DECIMAL(31, 11), col2 DECIMAL(31,1), col3 DECIMAL(38,1))";
             createTestTable(getUrl(), ddl);
@@ -311,7 +316,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String testRandomFunction = generateRandomString();
+            String testRandomFunction = generateUniqueName();
             String ddl =
                 "CREATE TABLE " + testRandomFunction + " (pk VARCHAR NOT NULL PRIMARY KEY)";
             createTestTable(getUrl(), ddl);
@@ -368,7 +373,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
             assertTrue(rs.next());
             assertTrue(rand12 == rs.getDouble(3));
 
-            String testRandomFunction1 = generateRandomString();
+            String testRandomFunction1 = generateUniqueName();
             ddl = "CREATE TABLE " + testRandomFunction1
                 + " (pk VARCHAR NOT NULL PRIMARY KEY, v1 UNSIGNED_DOUBLE)";
             createTestTable(getUrl(), ddl);
@@ -427,7 +432,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
         Connection conn = DriverManager.getConnection(getUrl(), props);
         conn.setAutoCommit(false);
         try {
-            String testDecimalArithmetic = generateRandomString();
+            String testDecimalArithmetic = generateUniqueName();
             String ddl = "CREATE TABLE " + testDecimalArithmetic +
                     "  (pk VARCHAR NOT NULL PRIMARY KEY, " +
                     "col1 DECIMAL(38,0), col2 DECIMAL(5, 2), col3 INTEGER, col4 BIGINT, col5 DECIMAL)";
@@ -656,8 +661,9 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     }
     @Test
     public void testSumDouble() throws Exception {
-        initSumDoubleValues(null, getUrl());
-        String query = "SELECT SUM(d) FROM SumDoubleTest";
+        String tableName = "TBL_" + generateUniqueName();
+        initSumDoubleValues(tableName, null, getUrl());
+        String query = "SELECT SUM(d) FROM " + tableName ;
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
@@ -673,8 +679,9 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     
     @Test
     public void testSumUnsignedDouble() throws Exception {
-        initSumDoubleValues(null, getUrl());
-        String query = "SELECT SUM(ud) FROM SumDoubleTest";
+        String tableName = "TBL_" + generateUniqueName();
+        initSumDoubleValues(tableName, null, getUrl());
+        String query = "SELECT SUM(ud) FROM " + tableName ;
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
@@ -690,8 +697,9 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     
     @Test
     public void testSumFloat() throws Exception {
-        initSumDoubleValues(null, getUrl());
-        String query = "SELECT SUM(f) FROM SumDoubleTest";
+        String tableName = "TBL_" + generateUniqueName();
+        initSumDoubleValues(tableName, null, getUrl());
+        String query = "SELECT SUM(f) FROM " + tableName ;
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
@@ -707,8 +715,9 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     
     @Test
     public void testSumUnsignedFloat() throws Exception {
-        initSumDoubleValues(null, getUrl());
-        String query = "SELECT SUM(uf) FROM SumDoubleTest";
+        String tableName = "TBL_" + generateUniqueName();
+        initSumDoubleValues(tableName, null, getUrl());
+        String query = "SELECT SUM(uf) FROM " + tableName;
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
@@ -723,7 +732,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     }
     
     private String initIntegerTable(Connection conn) throws SQLException {
-        String arithmetic_test = generateRandomString();
+        String arithmetic_test = generateUniqueName();
         String ddl = "CREATE TABLE " + arithmetic_test
             + " (six INTEGER PRIMARY KEY, four INTEGER, three INTEGER)";
         conn.createStatement().execute(ddl);
@@ -966,7 +975,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     @Test
     public void testCastingOnConstantAddInArithmeticEvaluation() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String testTable = generateRandomString();
+        String testTable = generateUniqueName();
         String ddl = "CREATE TABLE IF NOT EXISTS " + testTable
             + " (k1 INTEGER NOT NULL, v1 INTEGER CONSTRAINT pk PRIMARY KEY (k1))";
         conn.createStatement().execute(ddl);
@@ -984,7 +993,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     @Test
     public void testCastingOnConstantSubInArithmeticEvaluation() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String testTable = generateRandomString();
+        String testTable = generateUniqueName();
         String ddl = "CREATE TABLE IF NOT EXISTS " + testTable
             + " (k1 INTEGER NOT NULL, v1 INTEGER CONSTRAINT pk PRIMARY KEY (k1))";
         conn.createStatement().execute(ddl);
@@ -1001,7 +1010,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     @Test
     public void testFloatingPointUpsert() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String test = generateRandomString();
+        String test = generateUniqueName();
         String ddl =
             "CREATE TABLE " + test + " (id VARCHAR not null primary key, name VARCHAR, lat FLOAT)";
         conn.createStatement().execute(ddl);
@@ -1017,7 +1026,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     @Test
     public void testFloatingPointMultiplicationUpsert() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String test = generateRandomString();
+        String test = generateUniqueName();
         String ddl =
             "CREATE TABLE " + test + " (id VARCHAR not null primary key, name VARCHAR, lat FLOAT)";
         conn.createStatement().execute(ddl);
@@ -1034,14 +1043,14 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     @Test
     public void testSystemTableHasDoubleForExponentialNumber() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String test = generateRandomString();
+        String test = generateUniqueName();
         String ddl = "CREATE TABLE " + test + " (id VARCHAR not null primary key, num FLOAT)";
         conn.createStatement().execute(ddl);
         String dml = "UPSERT INTO " + test + "(id,num) VALUES ('testid', 1.2E3)";
         conn.createStatement().execute(dml);
         conn.commit();
 
-        ResultSet rs = conn.createStatement().executeQuery("SELECT 1.2E3 FROM SYSTEM.CATALOG LIMIT 1");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT 1.2E3 FROM \"SYSTEM\".\"CATALOG\" LIMIT 1");
         assertTrue(rs.next());
         assertTrue(rs.getObject(1) instanceof Double);
     }
@@ -1068,7 +1077,7 @@ public class ArithmeticQueryIT extends BaseHBaseManagedTimeTableReuseIT {
     
     private ResultSet createTableWithValues(String[] values, String valueType) throws SQLException {
     	Connection conn = DriverManager.getConnection(getUrl());
-        String test = generateRandomString();
+        String test = generateUniqueName();
         StringBuilder ddl = new StringBuilder(
             "CREATE TABLE " + test + " (id VARCHAR not null primary key");
         StringBuilder dmll = new StringBuilder("UPSERT INTO " + test + "(id,");

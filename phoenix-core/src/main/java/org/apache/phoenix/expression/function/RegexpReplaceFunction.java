@@ -25,6 +25,7 @@ import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.phoenix.expression.Determinism;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.util.regex.AbstractBasePattern;
+import org.apache.phoenix.parse.FunctionParseNode;
 import org.apache.phoenix.parse.FunctionParseNode.Argument;
 import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
 import org.apache.phoenix.parse.RegexpReplaceParseNode;
@@ -53,7 +54,9 @@ import org.apache.phoenix.schema.types.PVarchar;
     nodeClass = RegexpReplaceParseNode.class, args= {
     @Argument(allowedTypes={PVarchar.class}),
     @Argument(allowedTypes={PVarchar.class}),
-    @Argument(allowedTypes={PVarchar.class},defaultValue="null")} )
+    @Argument(allowedTypes={PVarchar.class},defaultValue="null")},
+    classType = FunctionParseNode.FunctionClassType.ABSTRACT,
+    derivedFunctions = {ByteBasedRegexpReplaceFunction.class, StringBasedRegexpReplaceFunction.class})
 public abstract class RegexpReplaceFunction extends ScalarFunction {
     public static final String NAME = "REGEXP_REPLACE";
 
@@ -98,6 +101,9 @@ public abstract class RegexpReplaceFunction extends ScalarFunction {
             if (!e.evaluate(tuple, ptr)) {
                 return false;
             }
+            if (ptr.getLength()==0) {
+                return true;
+            }
             String patternStr = (String) TYPE.toObject(ptr, e.getDataType(), e.getSortOrder());
             if (patternStr == null) {
                 return false;
@@ -113,6 +119,9 @@ public abstract class RegexpReplaceFunction extends ScalarFunction {
             if (!replaceStrExpression.evaluate(tuple, ptr)) {
                 return false;
             }
+            if (ptr.getLength()==0) {
+                return true;
+            }
             TYPE.coerceBytes(ptr, TYPE, replaceStrExpression.getSortOrder(), SortOrder.ASC);
             rStrBytes = ptr.get();
             rStrOffset = ptr.getOffset();
@@ -122,6 +131,9 @@ public abstract class RegexpReplaceFunction extends ScalarFunction {
         Expression sourceStrExpression = getSourceStrExpression();
         if (!sourceStrExpression.evaluate(tuple, ptr)) {
             return false;
+        }
+        if (ptr.getLength()==0) {
+            return true;
         }
         TYPE.coerceBytes(ptr, TYPE, sourceStrExpression.getSortOrder(), SortOrder.ASC);
 

@@ -37,9 +37,9 @@ import org.junit.Test;
  */
 
 
-public class StatementHintsIT extends BaseHBaseManagedTimeTableReuseIT {
+public class StatementHintsIT extends ParallelStatsDisabledIT {
 
-    private static final String TABLE_NAME = generateRandomString();
+    private static final String TABLE_NAME = generateUniqueName();
 
     private static void initTableValues() throws Exception {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);

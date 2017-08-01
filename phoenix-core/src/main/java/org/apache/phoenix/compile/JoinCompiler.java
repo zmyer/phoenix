@@ -17,6 +17,9 @@
  */
 package org.apache.phoenix.compile;
 
+import static org.apache.phoenix.schema.PTable.QualifierEncodingScheme.NON_ENCODED_QUALIFIERS;
+import static org.apache.phoenix.schema.PTable.ImmutableStorageScheme.ONE_CELL_PER_COLUMN;
+
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,12 +54,14 @@ import org.apache.phoenix.parse.DerivedTableNode;
 import org.apache.phoenix.parse.EqualParseNode;
 import org.apache.phoenix.parse.HintNode;
 import org.apache.phoenix.parse.HintNode.Hint;
+import org.apache.phoenix.parse.IndexExpressionParseNodeRewriter;
 import org.apache.phoenix.parse.JoinTableNode;
 import org.apache.phoenix.parse.JoinTableNode.JoinType;
 import org.apache.phoenix.parse.NamedTableNode;
 import org.apache.phoenix.parse.OrderByNode;
 import org.apache.phoenix.parse.ParseNode;
 import org.apache.phoenix.parse.ParseNodeFactory;
+import org.apache.phoenix.parse.ParseNodeRewriter;
 import org.apache.phoenix.parse.SelectStatement;
 import org.apache.phoenix.parse.StatelessTraverseAllParseNodeVisitor;
 import org.apache.phoenix.parse.TableName;
@@ -74,9 +79,12 @@ import org.apache.phoenix.schema.PName;
 import org.apache.phoenix.schema.PNameFactory;
 import org.apache.phoenix.schema.PTable;
 import org.apache.phoenix.schema.PTable.IndexType;
+import org.apache.phoenix.schema.PTable.QualifierEncodingScheme;
+import org.apache.phoenix.schema.PTable.ImmutableStorageScheme;
 import org.apache.phoenix.schema.PTableImpl;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.ProjectedColumn;
+import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.types.PBoolean;
 import org.apache.phoenix.schema.types.PDataType;
@@ -90,6 +98,7 @@ import org.apache.phoenix.schema.types.PTimestamp;
 import org.apache.phoenix.schema.types.PTinyint;
 import org.apache.phoenix.schema.types.PVarbinary;
 import org.apache.phoenix.schema.types.PVarchar;
+import org.apache.phoenix.util.EncodedColumnsUtil;
 import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.SchemaUtil;
 
@@ -101,7 +110,6 @@ import com.google.common.collect.Sets;
 public class JoinCompiler {
 
     public enum ColumnRefType {
-        PREFILTER,
         JOINLOCAL,
         GENERAL,
     }
@@ -159,10 +167,6 @@ public class JoinCompiler {
         for (ColumnRef ref : joinLocalRefVisitor.getColumnRefMap().keySet()) {
             if (!compiler.columnRefs.containsKey(ref))
                 compiler.columnRefs.put(ref, ColumnRefType.JOINLOCAL);
-        }
-        for (ColumnRef ref : prefilterRefVisitor.getColumnRefMap().keySet()) {
-            if (!compiler.columnRefs.containsKey(ref))
-                compiler.columnRefs.put(ref, ColumnRefType.PREFILTER);
         }
 
         return joinTable;
@@ -500,11 +504,11 @@ public class JoinCompiler {
                 rhsCompiler.reset();
                 Expression right = condition.getRHS().accept(rhsCompiler);
                 PDataType toType = getCommonType(left.getDataType(), right.getDataType());
-                if (left.getDataType() != toType) {
-                    left = CoerceExpression.create(left, toType);
+                if (left.getDataType() != toType || left.getSortOrder() == SortOrder.DESC) {
+                    left = CoerceExpression.create(left, toType, SortOrder.ASC, left.getMaxLength());
                 }
-                if (right.getDataType() != toType) {
-                    right = CoerceExpression.create(right, toType);
+                if (right.getDataType() != toType || right.getSortOrder() == SortOrder.DESC) {
+                    right = CoerceExpression.create(right, toType, SortOrder.ASC, right.getMaxLength());
                 }
                 compiled.add(new Pair<Expression, Expression>(left, right));
             }
@@ -687,7 +691,11 @@ public class JoinCompiler {
 
         public SelectStatement getAsSubquery(List<OrderByNode> orderBy) throws SQLException {
             if (isSubselect())
-                return SubselectRewriter.applyOrderBy(SubselectRewriter.applyPostFilters(subselect, preFilters, tableNode.getAlias()), orderBy, tableNode.getAlias());
+                return SubselectRewriter.applyOrderBy(
+                        SubselectRewriter.applyPostFilters(subselect, preFilters, tableNode.getAlias()),
+                        orderBy,
+                        tableNode.getAlias(),
+                        tableNode);
 
             return NODE_FACTORY.select(tableNode, select.getHint(), false, selectNodes, getPreFiltersCombined(), null,
                     null, orderBy, null, null, 0, false, select.hasSequence(),
@@ -716,7 +724,7 @@ public class JoinCompiler {
                 if (columnRef.getTableRef().equals(tableRef)
                         && !SchemaUtil.isPKColumn(columnRef.getColumn())
                         && !(columnRef instanceof LocalIndexColumnRef)) {
-                    scan.addColumn(columnRef.getColumn().getFamilyName().getBytes(), columnRef.getColumn().getName().getBytes());
+                	EncodedColumnsUtil.setColumns(columnRef.getColumn(), tableRef.getTable(), scan);
                 }
             }
         }
@@ -739,8 +747,7 @@ public class JoinCompiler {
             } else {
                 for (Map.Entry<ColumnRef, ColumnRefType> e : columnRefs.entrySet()) {
                     ColumnRef columnRef = e.getKey();
-                    if (e.getValue() != ColumnRefType.PREFILTER
-                            && columnRef.getTableRef().equals(tableRef)
+                    if (columnRef.getTableRef().equals(tableRef)
                             && (!retainPKColumns || !SchemaUtil.isPKColumn(columnRef.getColumn()))) {
                         if (columnRef instanceof LocalIndexColumnRef) {
                             sourceColumns.add(new LocalIndexDataColumnRef(context, IndexUtil.getIndexColumnName(columnRef.getColumn())));
@@ -1247,7 +1254,12 @@ public class JoinCompiler {
             }
         });
 
-        return IndexStatementRewriter.translate(NODE_FACTORY.select(select, newFrom), resolver, replacement);
+        SelectStatement indexSelect = IndexStatementRewriter.translate(NODE_FACTORY.select(select, newFrom), resolver, replacement);
+        for ( TableRef indexTableRef : replacement.values()) {
+            // replace expressions with corresponding matching columns for functional indexes
+            indexSelect = ParseNodeRewriter.rewrite(indexSelect, new  IndexExpressionParseNodeRewriter(indexTableRef.getTable(), indexTableRef.getTableAlias(), statement.getConnection(), indexSelect.getUdfParseNodes()));
+        }
+        return indexSelect;
     }
 
     private static SelectStatement getSubqueryForOptimizedPlan(HintNode hintNode, List<ColumnDef> dynamicCols, TableRef tableRef, Map<ColumnRef, ColumnRefType> columnRefs, ParseNode where, List<ParseNode> groupBy,
@@ -1282,7 +1294,7 @@ public class JoinCompiler {
         if (type == JoinType.Full) {
             for (PColumn c : left.getColumns()) {
                 merged.add(new ProjectedColumn(c.getName(), c.getFamilyName(),
-                        c.getPosition(), true, ((ProjectedColumn) c).getSourceColumnRef()));
+                        c.getPosition(), true, ((ProjectedColumn) c).getSourceColumnRef(), SchemaUtil.isPKColumn(c) ? null : c.getName().getBytes()));
             }
         } else {
             merged.addAll(left.getColumns());
@@ -1292,14 +1304,13 @@ public class JoinCompiler {
             if (!SchemaUtil.isPKColumn(c)) {
                 PColumn column = new ProjectedColumn(c.getName(), c.getFamilyName(), 
                         position++, type == JoinType.Inner ? c.isNullable() : true, 
-                        ((ProjectedColumn) c).getSourceColumnRef());
+                        ((ProjectedColumn) c).getSourceColumnRef(), c.getName().getBytes());
                 merged.add(column);
             }
         }
         if (left.getBucketNum() != null) {
             merged.remove(0);
         }
-        
         return PTableImpl.makePTable(left.getTenantId(), left.getSchemaName(),
                 PNameFactory.newName(SchemaUtil.getTableName(left.getName().getString(), right.getName().getString())),
                 left.getType(), left.getIndexState(), left.getTimeStamp(), left.getSequenceNumber(), left.getPKName(),
@@ -1307,7 +1318,8 @@ public class JoinCompiler {
                 left.isImmutableRows(), Collections.<PName> emptyList(), null, null, PTable.DEFAULT_DISABLE_WAL,
                 left.isMultiTenant(), left.getStoreNulls(), left.getViewType(), left.getViewIndexId(),
                 left.getIndexType(), left.rowKeyOrderOptimizable(), left.isTransactional(),
-                left.getUpdateCacheFrequency(), left.getIndexDisableTimestamp(), left.isNamespaceMapped());
+                left.getUpdateCacheFrequency(), left.getIndexDisableTimestamp(), left.isNamespaceMapped(), 
+                left.getAutoPartitionSeqName(), left.isAppendOnlySchema(), ONE_CELL_PER_COLUMN, NON_ENCODED_QUALIFIERS, PTable.EncodedCQCounter.NULL_COUNTER, left.useStatsForParallelization());
     }
 
 }

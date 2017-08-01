@@ -21,6 +21,7 @@ import org.apache.hadoop.hbase.util.ByteStringer;
 import org.apache.phoenix.coprocessor.generated.PTableProtos;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.types.PDataType;
+import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.SizedUtil;
 
 import com.google.common.base.Preconditions;
@@ -40,6 +41,7 @@ public class PColumnImpl implements PColumn {
     private String expressionStr;
     private boolean isRowTimestamp;
     private boolean isDynamic;
+    private byte[] columnQualifierBytes;
     
     public PColumnImpl() {
     }
@@ -51,13 +53,13 @@ public class PColumnImpl implements PColumn {
                        Integer scale,
                        boolean nullable,
                        int position,
-                       SortOrder sortOrder, Integer arrSize, byte[] viewConstant, boolean isViewReferenced, String expressionStr, boolean isRowTimestamp, boolean isDynamic) {
-        init(name, familyName, dataType, maxLength, scale, nullable, position, sortOrder, arrSize, viewConstant, isViewReferenced, expressionStr, isRowTimestamp, isDynamic);
+                       SortOrder sortOrder, Integer arrSize, byte[] viewConstant, boolean isViewReferenced, String expressionStr, boolean isRowTimestamp, boolean isDynamic, byte[] columnQualifierBytes) {
+        init(name, familyName, dataType, maxLength, scale, nullable, position, sortOrder, arrSize, viewConstant, isViewReferenced, expressionStr, isRowTimestamp, isDynamic, columnQualifierBytes);
     }
 
     public PColumnImpl(PColumn column, int position) {
         this(column.getName(), column.getFamilyName(), column.getDataType(), column.getMaxLength(),
-                column.getScale(), column.isNullable(), position, column.getSortOrder(), column.getArraySize(), column.getViewConstant(), column.isViewReferenced(), column.getExpressionStr(), column.isRowTimestamp(), column.isDynamic());
+                column.getScale(), column.isNullable(), position, column.getSortOrder(), column.getArraySize(), column.getViewConstant(), column.isViewReferenced(), column.getExpressionStr(), column.isRowTimestamp(), column.isDynamic(), column.getColumnQualifierBytes());
     }
 
     private void init(PName name,
@@ -69,7 +71,7 @@ public class PColumnImpl implements PColumn {
             int position,
             SortOrder sortOrder,
             Integer arrSize,
-            byte[] viewConstant, boolean isViewReferenced, String expressionStr, boolean isRowTimestamp, boolean isDynamic) {
+            byte[] viewConstant, boolean isViewReferenced, String expressionStr, boolean isRowTimestamp, boolean isDynamic, byte[] columnQualifierBytes) {
     	Preconditions.checkNotNull(sortOrder);
         this.dataType = dataType;
         if (familyName == null) {
@@ -94,6 +96,7 @@ public class PColumnImpl implements PColumn {
         this.expressionStr = expressionStr;
         this.isRowTimestamp = isRowTimestamp;
         this.isDynamic = isDynamic;
+        this.columnQualifierBytes = columnQualifierBytes;
     }
 
     @Override
@@ -170,14 +173,14 @@ public class PColumnImpl implements PColumn {
     public boolean equals(Object obj) {
         if (this == obj) return true;
         if (obj == null) return false;
-        if (getClass() != obj.getClass()) return false;
-        PColumnImpl other = (PColumnImpl)obj;
+        if (! (obj instanceof PColumn) ) return false;
+        PColumn other = (PColumn)obj;
         if (familyName == null) {
-            if (other.familyName != null) return false;
-        } else if (!familyName.equals(other.familyName)) return false;
+            if (other.getFamilyName() != null) return false;
+        } else if (!familyName.equals(other.getFamilyName())) return false;
         if (name == null) {
-            if (other.name != null) return false;
-        } else if (!name.equals(other.name)) return false;
+            if (other.getName() != null) return false;
+        } else if (!name.equals(other.getName())) return false;
         return true;
     }
 
@@ -204,6 +207,15 @@ public class PColumnImpl implements PColumn {
     @Override
     public boolean isDynamic() {
         return isDynamic;
+    }
+    
+    @Override
+    public byte[] getColumnQualifierBytes() {
+        // Needed for backward compatibility
+        if (!SchemaUtil.isPKColumn(this) && columnQualifierBytes == null) {
+            return this.name.getBytes();
+        }
+        return columnQualifierBytes;
     }
 
     /**
@@ -251,8 +263,12 @@ public class PColumnImpl implements PColumn {
         if (column.hasIsDynamic()) {
         	isDynamic = column.getIsDynamic();
         }
+        byte[] columnQualifierBytes = null;
+        if (column.hasColumnQualifierBytes()) {
+            columnQualifierBytes = column.getColumnQualifierBytes().toByteArray();
+        }
         return new PColumnImpl(columnName, familyName, dataType, maxLength, scale, nullable, position, sortOrder,
-                arraySize, viewConstant, isViewReferenced, expressionStr, isRowTimestamp, isDynamic);
+                arraySize, viewConstant, isViewReferenced, expressionStr, isRowTimestamp, isDynamic, columnQualifierBytes);
     }
 
     public static PTableProtos.PColumn toProto(PColumn column) {
@@ -283,6 +299,9 @@ public class PColumnImpl implements PColumn {
             builder.setExpression(column.getExpressionStr());
         }
         builder.setIsRowTimestamp(column.isRowTimestamp());
+        if (column.getColumnQualifierBytes() != null) {
+            builder.setColumnQualifierBytes(ByteStringer.wrap(column.getColumnQualifierBytes()));
+        }
         return builder.build();
     }
 }

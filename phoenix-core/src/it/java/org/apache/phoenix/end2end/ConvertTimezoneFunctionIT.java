@@ -1,11 +1,13 @@
 /*
- * Copyright 2014 Apache Software Foundation.
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
  *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -34,12 +36,12 @@ import org.junit.Test;
  *
  */
 
-public class ConvertTimezoneFunctionIT extends BaseHBaseManagedTimeTableReuseIT {
+public class ConvertTimezoneFunctionIT extends ParallelStatsDisabledIT {
 
     @Test
-    public void testConvertTimezoneEurope() throws Exception {
+    public void testDateConvertTimezoneEurope() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String timezone_offset_test = generateRandomString();
+        String timezone_offset_test = generateUniqueName();
         String ddl = "CREATE TABLE IF NOT EXISTS " + timezone_offset_test
             + " (k1 INTEGER NOT NULL, dates DATE CONSTRAINT pk PRIMARY KEY (k1))";
         conn.createStatement().execute(ddl);
@@ -57,9 +59,29 @@ public class ConvertTimezoneFunctionIT extends BaseHBaseManagedTimeTableReuseIT 
     }
 
     @Test
+    public void testTimestampConvertTimezoneEurope() throws Exception {
+        Connection conn = DriverManager.getConnection(getUrl());
+        String timezone_offset_test = generateUniqueName();
+        String ddl = "CREATE TABLE IF NOT EXISTS " + timezone_offset_test
+            + " (k1 INTEGER NOT NULL, timestamps TIMESTAMP CONSTRAINT pk PRIMARY KEY (k1))";
+        conn.createStatement().execute(ddl);
+        String dml = "UPSERT INTO " + timezone_offset_test
+            + " (k1, timestamps) VALUES (1, TO_TIMESTAMP('2014-03-01 00:00:00'))";
+        conn.createStatement().execute(dml);
+        conn.commit();
+
+        ResultSet rs = conn.createStatement().executeQuery(
+            "SELECT k1, timestamps, CONVERT_TZ(timestamps, 'UTC', 'Europe/Prague') FROM "
+                + timezone_offset_test);
+
+        assertTrue(rs.next());
+        assertEquals(1393635600000L, rs.getDate(3).getTime()); //Sat, 01 Mar 2014 01:00:00
+    }
+
+    @Test
     public void testConvertTimezoneAmerica() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String timezone_offset_test = generateRandomString();
+        String timezone_offset_test = generateUniqueName();
         String ddl = "CREATE TABLE IF NOT EXISTS " + timezone_offset_test
             + " (k1 INTEGER NOT NULL, dates DATE CONSTRAINT pk PRIMARY KEY (k1))";
         conn.createStatement().execute(ddl);
@@ -79,7 +101,7 @@ public class ConvertTimezoneFunctionIT extends BaseHBaseManagedTimeTableReuseIT 
     @Test
     public void nullInDateParameter() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String timezone_offset_test = generateRandomString();
+        String timezone_offset_test = generateUniqueName();
         String ddl = "CREATE TABLE IF NOT EXISTS " + timezone_offset_test
             + " (k1 INTEGER NOT NULL, dates DATE CONSTRAINT pk PRIMARY KEY (k1))";
         conn.createStatement().execute(ddl);
@@ -99,7 +121,7 @@ public class ConvertTimezoneFunctionIT extends BaseHBaseManagedTimeTableReuseIT 
     @Test
     public void nullInFirstTimezoneParameter() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String timezone_offset_test = generateRandomString();
+        String timezone_offset_test = generateUniqueName();
         String ddl = "CREATE TABLE IF NOT EXISTS " + timezone_offset_test
             + " (k1 INTEGER NOT NULL, dates DATE, tz VARCHAR, CONSTRAINT pk PRIMARY KEY (k1))";
         conn.createStatement().execute(ddl);
@@ -119,7 +141,7 @@ public class ConvertTimezoneFunctionIT extends BaseHBaseManagedTimeTableReuseIT 
     @Test
     public void nullInSecondTimezoneParameter() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String timezone_offset_test = generateRandomString();
+        String timezone_offset_test = generateUniqueName();
         String ddl = "CREATE TABLE IF NOT EXISTS " + timezone_offset_test
             + " (k1 INTEGER NOT NULL, dates DATE, tz VARCHAR, CONSTRAINT pk PRIMARY KEY (k1))";
         conn.createStatement().execute(ddl);
@@ -139,7 +161,7 @@ public class ConvertTimezoneFunctionIT extends BaseHBaseManagedTimeTableReuseIT 
     @Test
     public void unknownTimezone() throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        String timezone_offset_test = generateRandomString();
+        String timezone_offset_test = generateUniqueName();
         String ddl = "CREATE TABLE IF NOT EXISTS " + timezone_offset_test
             + " (k1 INTEGER NOT NULL, dates DATE CONSTRAINT pk PRIMARY KEY (k1))";
         conn.createStatement().execute(ddl);
@@ -164,7 +186,7 @@ public class ConvertTimezoneFunctionIT extends BaseHBaseManagedTimeTableReuseIT 
 	@Test
 	public void testConvertMultipleRecords() throws Exception {
 		Connection conn = DriverManager.getConnection(getUrl());
-      String timezone_offset_test = generateRandomString();
+      String timezone_offset_test = generateUniqueName();
       String ddl = "CREATE TABLE IF NOT EXISTS " + timezone_offset_test
           + " (k1 INTEGER NOT NULL, dates DATE CONSTRAINT pk PRIMARY KEY (k1))";
 		Statement stmt = conn.createStatement();

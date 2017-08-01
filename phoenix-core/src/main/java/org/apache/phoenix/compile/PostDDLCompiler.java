@@ -50,6 +50,7 @@ import org.apache.phoenix.schema.TableNotFoundException;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.schema.types.PLong;
+import org.apache.phoenix.util.EncodedColumnsUtil;
 import org.apache.phoenix.util.ScanUtil;
 import org.apache.phoenix.util.TransactionUtil;
 
@@ -82,7 +83,7 @@ public class PostDDLCompiler {
         scan.setAttribute(BaseScannerRegionObserver.UNGROUPED_AGG, QueryConstants.TRUE);
     }
 
-    public MutationPlan compile(final List<TableRef> tableRefs, final byte[] emptyCF, final byte[] projectCF, final List<PColumn> deleteList,
+    public MutationPlan compile(final List<TableRef> tableRefs, final byte[] emptyCF, final List<byte[]> projectCFs, final List<PColumn> deleteList,
             final long timestamp) throws SQLException {
         PhoenixStatement statement = new PhoenixStatement(connection);
         final StatementContext context = new StatementContext(
@@ -139,7 +140,7 @@ public class PostDDLCompiler {
             @Override
             public MutationState execute() throws SQLException {
                 if (tableRefs.isEmpty()) {
-                    return new MutationState(0, connection);
+                    return new MutationState(0, 1000, connection);
                 }
                 boolean wasAutoCommit = connection.getAutoCommit();
                 try {
@@ -176,8 +177,8 @@ public class PostDDLCompiler {
                             @Override
                             public ColumnRef resolveColumn(String schemaName, String tableName, String colName) throws SQLException {
                                 PColumn column = tableName != null
-                                        ? tableRef.getTable().getColumnFamily(tableName).getColumn(colName)
-                                        : tableRef.getTable().getColumn(colName);
+                                        ? tableRef.getTable().getColumnFamily(tableName).getPColumnForColumnName(colName)
+                                        : tableRef.getTable().getColumnForColumnName(colName);
                                 return new ColumnRef(tableRef, column.getPosition());
                             }
                             
@@ -210,9 +211,10 @@ public class PostDDLCompiler {
                         if (ts!=HConstants.LATEST_TIMESTAMP && tableRef.getTable().isTransactional()) {
                             ts = TransactionUtil.convertToNanoseconds(ts);
                         }
-                        ScanUtil.setTimeRange(scan, ts);
+                        ScanUtil.setTimeRange(scan, scan.getTimeRange().getMin(), ts);
                         if (emptyCF != null) {
                             scan.setAttribute(BaseScannerRegionObserver.EMPTY_CF, emptyCF);
+                            scan.setAttribute(BaseScannerRegionObserver.EMPTY_COLUMN_QUALIFIER, EncodedColumnsUtil.getEmptyKeyValueInfo(tableRef.getTable()).getFirst());
                         }
                         ServerCache cache = null;
                         try {
@@ -236,23 +238,27 @@ public class PostDDLCompiler {
                                     // data empty column family to stay the same, while the index empty column family
                                     // changes.
                                     PColumn column = deleteList.get(0);
+                                    byte[] cq = column.getColumnQualifierBytes();
                                     if (emptyCF == null) {
-                                        scan.addColumn(column.getFamilyName().getBytes(), column.getName().getBytes());
+                                        scan.addColumn(column.getFamilyName().getBytes(), cq);
                                     }
                                     scan.setAttribute(BaseScannerRegionObserver.DELETE_CF, column.getFamilyName().getBytes());
-                                    scan.setAttribute(BaseScannerRegionObserver.DELETE_CQ, column.getName().getBytes());
+                                    scan.setAttribute(BaseScannerRegionObserver.DELETE_CQ, cq);
                                 }
                             }
                             List<byte[]> columnFamilies = Lists.newArrayListWithExpectedSize(tableRef.getTable().getColumnFamilies().size());
-                            if (projectCF == null) {
+                            if (projectCFs == null) {
                                 for (PColumnFamily family : tableRef.getTable().getColumnFamilies()) {
                                     columnFamilies.add(family.getName().getBytes());
                                 }
                             } else {
-                                columnFamilies.add(projectCF);
+                                for (byte[] projectCF : projectCFs) {
+                                    columnFamilies.add(projectCF);
+                                }
                             }
                             // Need to project all column families into the scan, since we haven't yet created our empty key value
                             RowProjector projector = ProjectionCompiler.compile(context, SelectStatement.COUNT_ONE, GroupBy.EMPTY_GROUP_BY);
+                            context.getAggregationManager().compile(context, GroupBy.EMPTY_GROUP_BY);
                             // Explicitly project these column families and don't project the empty key value,
                             // since at this point we haven't added the empty key value everywhere.
                             if (columnFamilies != null) {
@@ -313,7 +319,7 @@ public class PostDDLCompiler {
                         
                     }
                     final long count = totalMutationCount;
-                    return new MutationState(1, connection) {
+                    return new MutationState(1, 1000, connection) {
                         @Override
                         public long getUpdateCount() {
                             return count;

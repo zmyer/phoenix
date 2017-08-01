@@ -33,18 +33,18 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import org.apache.phoenix.util.MetaDataUtil;
 import org.apache.phoenix.util.QueryUtil;
 import org.junit.Test;
 
 
-public class DeleteIT extends BaseHBaseManagedTimeIT {
+public class DeleteIT extends ParallelStatsDisabledIT {
     private static final int NUMBER_OF_ROWS = 20;
     private static final int NTH_ROW_NULL = 5;
     
-    private static void initTableValues(Connection conn) throws SQLException {
-        ensureTableCreated(getUrl(),"IntIntKeyTest");
-        String upsertStmt = "UPSERT INTO IntIntKeyTest VALUES(?,?)";
+    private static String initTableValues(Connection conn) throws SQLException {
+        String tableName = generateUniqueName();
+        ensureTableCreated(getUrl(), tableName, "IntIntKeyTest");
+        String upsertStmt = "UPSERT INTO " + tableName + " VALUES(?,?)";
         PreparedStatement stmt = conn.prepareStatement(upsertStmt);
         for (int i = 0; i < NUMBER_OF_ROWS; i++) {
             stmt.setInt(1, i);
@@ -56,6 +56,7 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
             stmt.execute();
         }
         conn.commit();
+        return tableName;
     }
 
     @Test
@@ -70,18 +71,18 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
     
     private void testDeleteFilter(boolean autoCommit) throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        initTableValues(conn);
+        String tableName = initTableValues(conn);
 
-        assertTableCount(conn, "IntIntKeyTest", NUMBER_OF_ROWS);
+        assertTableCount(conn, tableName, NUMBER_OF_ROWS);
         
         conn.setAutoCommit(autoCommit);
-        String deleteStmt = "DELETE FROM IntIntKeyTest WHERE 20 = j";
+        String deleteStmt = "DELETE FROM " + tableName + " WHERE 20 = j";
         assertEquals(1,conn.createStatement().executeUpdate(deleteStmt));
         if (!autoCommit) {
             conn.commit();
         }
 
-        assertTableCount(conn, "IntIntKeyTest", NUMBER_OF_ROWS - 1);
+        assertTableCount(conn, tableName, NUMBER_OF_ROWS - 1);
     }
 
     @Test
@@ -97,34 +98,34 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
 
     private void testDeleteByFilterAndRow(boolean autoCommit) throws SQLException {
         Connection conn = DriverManager.getConnection(getUrl());
-        initTableValues(conn);
+        String tableName = initTableValues(conn);
 
-        assertTableCount(conn, "IntIntKeyTest", NUMBER_OF_ROWS);
+        assertTableCount(conn, tableName, NUMBER_OF_ROWS);
 
         conn.setAutoCommit(autoCommit);
 
         Statement stmt = conn.createStatement();
 
         // This shouldn't delete anything, because the key matches but the filter doesn't
-        assertEquals(0, stmt.executeUpdate("DELETE FROM IntIntKeyTest WHERE i = 1 AND j = 1"));
+        assertEquals(0, stmt.executeUpdate("DELETE FROM " + tableName + " WHERE i = 1 AND j = 1"));
         if (!autoCommit) {
             conn.commit();
         }
-        assertTableCount(conn, "IntIntKeyTest", NUMBER_OF_ROWS);
+        assertTableCount(conn, tableName, NUMBER_OF_ROWS);
 
         // This shouldn't delete anything, because the filter matches but the key doesn't
-        assertEquals(0, stmt.executeUpdate("DELETE FROM IntIntKeyTest WHERE i = -1 AND j = 20"));
+        assertEquals(0, stmt.executeUpdate("DELETE FROM " + tableName + " WHERE i = -1 AND j = 20"));
         if (!autoCommit) {
             conn.commit();
         }
-        assertTableCount(conn, "IntIntKeyTest", NUMBER_OF_ROWS);
+        assertTableCount(conn, tableName, NUMBER_OF_ROWS);
 
         // This should do a delete, because both the filter and key match
-        assertEquals(1, stmt.executeUpdate("DELETE FROM IntIntKeyTest WHERE i = 1 AND j = 10"));
+        assertEquals(1, stmt.executeUpdate("DELETE FROM " + tableName + " WHERE i = 1 AND j = 10"));
         if (!autoCommit) {
             conn.commit();
         }
-        assertTableCount(conn, "IntIntKeyTest", NUMBER_OF_ROWS - 1);
+        assertTableCount(conn, tableName, NUMBER_OF_ROWS - 1);
 
     }
 
@@ -155,39 +156,43 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
 
     private void testDeleteRange(boolean autoCommit, boolean createIndex, boolean local) throws Exception {
         Connection conn = DriverManager.getConnection(getUrl());
-        initTableValues(conn);
-        
-        String indexName = "IDX";
+        String tableName = initTableValues(conn);
+        String indexName = generateUniqueName();
+        String localIndexName = generateUniqueName();
+
+        String indexInUse = indexName;
         if (createIndex) {
             if (local) {
-                conn.createStatement().execute("CREATE LOCAL INDEX IF NOT EXISTS local_idx ON IntIntKeyTest(j)");
-                indexName = MetaDataUtil.getLocalIndexTableName("INTINTKEYTEST");
+                conn.createStatement().execute("CREATE LOCAL INDEX IF NOT EXISTS " + localIndexName + " ON " + tableName + "(j)");
+                indexInUse = tableName;
             } else {
-                conn.createStatement().execute("CREATE INDEX IF NOT EXISTS idx ON IntIntKeyTest(j)");
+                conn.createStatement().execute("CREATE INDEX IF NOT EXISTS " + indexName + " ON " + tableName + "(j)");
             }
         }
         
         ResultSet rs;
-        rs = conn.createStatement().executeQuery("SELECT count(*) FROM IntIntKeyTest");
+        rs = conn.createStatement().executeQuery("SELECT count(*) FROM " + tableName);
         assertTrue(rs.next());
         assertEquals(NUMBER_OF_ROWS, rs.getInt(1));
 
-        rs = conn.createStatement().executeQuery("SELECT i FROM IntIntKeyTest WHERE j IS NULL");
+        rs = conn.createStatement().executeQuery("SELECT i FROM " + tableName + " WHERE j IS NULL");
         int i = 0, isNullCount = 0;
         while (rs.next()) {
             assertEquals(i,rs.getInt(1));
             i += NTH_ROW_NULL;
             isNullCount++;
         }
-        rs = conn.createStatement().executeQuery("SELECT count(*) FROM IntIntKeyTest WHERE j IS NOT NULL");
+        rs = conn.createStatement().executeQuery("SELECT count(*) FROM " + tableName + " WHERE j IS NOT NULL");
         assertTrue(rs.next());
         assertEquals(NUMBER_OF_ROWS-isNullCount, rs.getInt(1));
 
         String deleteStmt ;
         PreparedStatement stmt;
         conn.setAutoCommit(autoCommit);
-        deleteStmt = "DELETE FROM IntIntKeyTest WHERE i >= ? and i < ?";
-        assertIndexUsed(conn, deleteStmt, Arrays.<Object>asList(5,10), indexName, false);
+        deleteStmt = "DELETE FROM " + tableName + " WHERE i >= ? and i < ?";
+        if(!local) {
+            assertIndexUsed(conn, deleteStmt, Arrays.<Object>asList(5,10), indexInUse, false);
+        }
         stmt = conn.prepareStatement(deleteStmt);
         stmt.setInt(1, 5);
         stmt.setInt(2, 10);
@@ -196,22 +201,24 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
             conn.commit();
         }
         
-        String query = "SELECT count(*) FROM IntIntKeyTest";
-        assertIndexUsed(conn, query, indexName, createIndex);
-        query = "SELECT count(*) FROM IntIntKeyTest";
+        String query = "SELECT count(*) FROM " + tableName;
+        assertIndexUsed(conn, query, indexInUse, createIndex);
+        query = "SELECT count(*) FROM " + tableName;
         rs = conn.createStatement().executeQuery(query);
         assertTrue(rs.next());
         assertEquals(NUMBER_OF_ROWS - (10-5), rs.getInt(1));
         
-        deleteStmt = "DELETE FROM IntIntKeyTest WHERE j IS NULL";
+        deleteStmt = "DELETE FROM " + tableName + " WHERE j IS NULL";
         stmt = conn.prepareStatement(deleteStmt);
-        assertIndexUsed(conn, deleteStmt, indexName, createIndex);
+        if(!local) {
+            assertIndexUsed(conn, deleteStmt, indexInUse, createIndex);
+        }
         int deleteCount = stmt.executeUpdate();
         assertEquals(3, deleteCount);
         if (!autoCommit) {
             conn.commit();
         }
-        rs = conn.createStatement().executeQuery("SELECT count(*) FROM IntIntKeyTest");
+        rs = conn.createStatement().executeQuery("SELECT count(*) FROM " + tableName);
         assertTrue(rs.next());
         assertEquals(NUMBER_OF_ROWS - (10-5)-isNullCount+1, rs.getInt(1));
     }
@@ -287,25 +294,28 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
             con.setAutoCommit(autoCommit);
 
             Statement stm = con.createStatement();
-            String s = "CREATE TABLE IF NOT EXISTS web_stats (" +
+            String tableName = generateUniqueName();
+            String s = "CREATE TABLE IF NOT EXISTS " + tableName + "(" +
                     "HOST CHAR(2) NOT NULL," +
                     "DOMAIN VARCHAR NOT NULL, " +
                     "FEATURE VARCHAR NOT NULL, " +
-                    "DATE DATE NOT NULL, \n" + 
+                    "\"DATE\" DATE NOT NULL, \n" + 
                     "USAGE.CORE BIGINT," +
                     "USAGE.DB BIGINT," +
                     "STATS.ACTIVE_VISITOR INTEGER " +
-                    "CONSTRAINT PK PRIMARY KEY (HOST, DOMAIN, FEATURE, DATE))" + (isSalted ? " SALT_BUCKETS=3" : "");
+                    "CONSTRAINT PK PRIMARY KEY (HOST, DOMAIN, FEATURE, \"DATE\"))" + (isSalted ? " SALT_BUCKETS=3" : "");
             stm.execute(s);
+            String localIndexName = generateUniqueName();
+            String indexName = generateUniqueName();
             if (localIndex) {
-                stm.execute("CREATE LOCAL INDEX local_web_stats_idx ON web_stats (CORE,DB,ACTIVE_VISITOR)");
+                stm.execute("CREATE LOCAL INDEX " + localIndexName + " ON " + tableName + " (CORE,DB,ACTIVE_VISITOR)");
             } else {
-                stm.execute("CREATE INDEX web_stats_idx ON web_stats (CORE,DB,ACTIVE_VISITOR)");
+                stm.execute("CREATE INDEX " + indexName + " ON " + tableName + " (CORE,DB,ACTIVE_VISITOR)");
             }
             stm.close();
 
             PreparedStatement psInsert = con
-                    .prepareStatement("UPSERT INTO web_stats(HOST, DOMAIN, FEATURE, DATE, CORE, DB, ACTIVE_VISITOR) VALUES(?,?, ? , ?, ?, ?, ?)");
+                    .prepareStatement("UPSERT INTO " + tableName + "(HOST, DOMAIN, FEATURE, \"DATE\", CORE, DB, ACTIVE_VISITOR) VALUES(?,?, ? , ?, ?, ?, ?)");
             psInsert.setString(1, "AA");
             psInsert.setString(2, "BB");
             psInsert.setString(3, "CC");
@@ -319,18 +329,18 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
                 con.commit();
             }
             
-            con.createStatement().execute("DELETE FROM web_stats");
+            con.createStatement().execute("DELETE FROM " + tableName );
             if (!autoCommit) {
                 con.commit();
             }
             
-            ResultSet rs = con.createStatement().executeQuery("SELECT /*+ NO_INDEX */ count(*) FROM web_stats");
+            ResultSet rs = con.createStatement().executeQuery("SELECT /*+ NO_INDEX */ count(*) FROM " + tableName);
             assertTrue(rs.next());
             assertEquals(0, rs.getLong(1));
             if(localIndex){
-                rs = con.createStatement().executeQuery("SELECT count(*) FROM local_web_stats_idx");
+                rs = con.createStatement().executeQuery("SELECT count(*) FROM " + localIndexName);
             } else {
-                rs = con.createStatement().executeQuery("SELECT count(*) FROM web_stats_idx");
+                rs = con.createStatement().executeQuery("SELECT count(*) FROM " + indexName);
             }
             assertTrue(rs.next());
             assertEquals(0, rs.getLong(1));
@@ -361,22 +371,27 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
             con.setAutoCommit(autoCommit);
 
             Statement stm = con.createStatement();
-            stm.execute("CREATE TABLE IF NOT EXISTS web_stats (" +
+
+            String tableName = generateUniqueName();
+            String indexName1 = generateUniqueName();
+            String indexName2 = generateUniqueName();
+
+            stm.execute("CREATE TABLE IF NOT EXISTS " + tableName + " (" +
                     "HOST CHAR(2) NOT NULL," +
                     "DOMAIN VARCHAR NOT NULL, " +
                     "FEATURE VARCHAR NOT NULL, " +
-                    "DATE DATE NOT NULL, \n" + 
+                    "\"DATE\" DATE NOT NULL, \n" + 
                     "USAGE.CORE BIGINT," +
                     "USAGE.DB BIGINT," +
                     "STATS.ACTIVE_VISITOR INTEGER " +
-                    "CONSTRAINT PK PRIMARY KEY (HOST, DOMAIN, FEATURE, DATE)) IMMUTABLE_ROWS=true");
-            stm.execute("CREATE " + (localIndex ? "LOCAL" : "") + " INDEX web_stats_idx ON web_stats (DATE, FEATURE)");
-            stm.execute("CREATE " + (localIndex ? "LOCAL" : "") + " INDEX web_stats_idx2 ON web_stats (DATE, FEATURE, USAGE.DB)");
+                    "CONSTRAINT PK PRIMARY KEY (HOST, DOMAIN, FEATURE, \"DATE\")) IMMUTABLE_ROWS=true");
+            stm.execute("CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName1 + " ON " + tableName + " (\"DATE\", FEATURE)");
+            stm.execute("CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName2 + " ON " + tableName + " (\"DATE\", FEATURE, USAGE.DB)");
             stm.close();
 
             Date date = new Date(0);
             PreparedStatement psInsert = con
-                    .prepareStatement("UPSERT INTO web_stats(HOST, DOMAIN, FEATURE, DATE, CORE, DB, ACTIVE_VISITOR) VALUES(?,?, ? , ?, ?, ?, ?)");
+                    .prepareStatement("UPSERT INTO " + tableName + "(HOST, DOMAIN, FEATURE, \"DATE\", CORE, DB, ACTIVE_VISITOR) VALUES(?,?, ? , ?, ?, ?, ?)");
             psInsert.setString(1, "AA");
             psInsert.setString(2, "BB");
             psInsert.setString(3, "CC");
@@ -390,7 +405,7 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
                 con.commit();
             }
             
-            psInsert = con.prepareStatement("DELETE FROM web_stats WHERE (HOST, DOMAIN, FEATURE, DATE) = (?,?,?,?)");
+            psInsert = con.prepareStatement("DELETE FROM " + tableName + " WHERE (HOST, DOMAIN, FEATURE, \"DATE\") = (?,?,?,?)");
             psInsert.setString(1, "AA");
             psInsert.setString(2, "BB");
             psInsert.setString(3, "CC");
@@ -400,21 +415,21 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
                 con.commit();
             }
             
-            ResultSet rs = con.createStatement().executeQuery("SELECT /*+ NO_INDEX */ count(*) FROM web_stats");
+            ResultSet rs = con.createStatement().executeQuery("SELECT /*+ NO_INDEX */ count(*) FROM " + tableName);
             assertTrue(rs.next());
             assertEquals(0, rs.getLong(1));
 
-            rs = con.createStatement().executeQuery("SELECT count(*) FROM web_stats_idx");
+            rs = con.createStatement().executeQuery("SELECT count(*) FROM " + indexName1);
             assertTrue(rs.next());
             assertEquals(0, rs.getLong(1));
 
-            stm.execute("DROP INDEX web_stats_idx ON web_stats");
-            stm.execute("DROP INDEX web_stats_idx2 ON web_stats");
+            stm.execute("DROP INDEX " + indexName1 + " ON " + tableName);
+            stm.execute("DROP INDEX " + indexName2 + " ON " + tableName);
 
-            stm.execute("CREATE " + (localIndex ? "LOCAL" : "") + " INDEX web_stats_idx ON web_stats (USAGE.DB)");
-            stm.execute("CREATE " + (localIndex ? "LOCAL" : "") + " INDEX web_stats_idx2 ON web_stats (USAGE.DB, DATE)");
+            stm.execute("CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName1 + " ON " + tableName + " (USAGE.DB)");
+            stm.execute("CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName2 + " ON " + tableName + " (USAGE.DB, \"DATE\")");
             try{
-                psInsert = con.prepareStatement("DELETE FROM web_stats WHERE  USAGE.DB=2");
+                psInsert = con.prepareStatement("DELETE FROM " + tableName + " WHERE  USAGE.DB=2");
             } catch(Exception e) {
                 fail("There should not be any exception while deleting row");
             }
@@ -443,20 +458,22 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
             con = DriverManager.getConnection(getUrl());
             con.setAutoCommit(autoCommit);
 
+            String tableName = generateUniqueName();
+
             Statement stm = con.createStatement();
-            stm.execute("CREATE TABLE IF NOT EXISTS web_stats (" +
-                    "HOST CHAR(2) NOT NULL," +
+            stm.execute("CREATE TABLE IF NOT EXISTS " + tableName + "(" +
+                    " HOST CHAR(2) NOT NULL," +
                     "DOMAIN VARCHAR NOT NULL, " +
                     "FEATURE VARCHAR NOT NULL, " +
-                    "DATE DATE NOT NULL, \n" + 
+                    "\"DATE\" DATE NOT NULL, \n" + 
                     "USAGE.CORE BIGINT," +
                     "USAGE.DB BIGINT," +
                     "STATS.ACTIVE_VISITOR INTEGER " +
-                    "CONSTRAINT PK PRIMARY KEY (HOST, DOMAIN, FEATURE, DATE))");
+                    "CONSTRAINT PK PRIMARY KEY (HOST, DOMAIN, FEATURE, \"DATE\"))");
             stm.close();
 
             PreparedStatement psInsert = con
-                    .prepareStatement("UPSERT INTO web_stats(HOST, DOMAIN, FEATURE, DATE, CORE, DB, ACTIVE_VISITOR) VALUES(?,?, ? , ?, ?, ?, ?)");
+                    .prepareStatement("UPSERT INTO " + tableName + "(HOST, DOMAIN, FEATURE, \"DATE\", CORE, DB, ACTIVE_VISITOR) VALUES(?,?, ? , ?, ?, ?, ?)");
             psInsert.setString(1, "AA");
             psInsert.setString(2, "BB");
             psInsert.setString(3, "CC");
@@ -470,12 +487,12 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
                 con.commit();
             }
             
-            con.createStatement().execute("DELETE FROM web_stats");
+            con.createStatement().execute("DELETE FROM " + tableName);
             if (!autoCommit) {
                 con.commit();
             }
             
-            ResultSet rs = con.createStatement().executeQuery("SELECT /*+ NO_INDEX */ count(*) FROM web_stats");
+            ResultSet rs = con.createStatement().executeQuery("SELECT /*+ NO_INDEX */ count(*) FROM " + tableName);
             assertTrue(rs.next());
             assertEquals(0, rs.getLong(1));
         } finally {
@@ -488,16 +505,17 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testDeleteForTableWithRowTimestampColServer() throws Exception {
-        testDeleteForTableWithRowTimestampCol(true);
+        String tableName = generateUniqueName();
+        testDeleteForTableWithRowTimestampCol(true, tableName);
     }
     
     @Test
     public void testDeleteForTableWithRowTimestampColClient() throws Exception {
-        testDeleteForTableWithRowTimestampCol(false);
+        String tableName = generateUniqueName();
+        testDeleteForTableWithRowTimestampCol(false, tableName);
     }
     
-    private void testDeleteForTableWithRowTimestampCol(boolean autoCommit) throws Exception {
-        String tableName = "testDeleteForTableWithRowTimestampCol".toUpperCase();
+    private void testDeleteForTableWithRowTimestampCol(boolean autoCommit, String tableName) throws Exception {
         try (Connection conn = DriverManager.getConnection(getUrl())) {
             conn.setAutoCommit(autoCommit);
             Statement stm = conn.createStatement();
@@ -547,6 +565,46 @@ public class DeleteIT extends BaseHBaseManagedTimeIT {
             assertTrue(rs.next());
             assertEquals(0, rs.getLong(1));
         }
+    }
+    
+    @Test
+    public void testServerSideDeleteAutoCommitOn() throws Exception {
+        testDeleteCount(true, null);
+    }
+    
+    @Test
+    public void testClientSideDeleteCountAutoCommitOff() throws Exception {
+        testDeleteCount(false, null);
+    }
+    
+    @Test
+    public void testClientSideDeleteAutoCommitOn() throws Exception {
+        testDeleteCount(true, 1000);
+    }
+    
+    private void testDeleteCount(boolean autoCommit, Integer limit) throws Exception {
+        String tableName = generateUniqueName();
+
+        String ddl = "CREATE TABLE IF NOT EXISTS " + tableName + " (pk1 DECIMAL NOT NULL, v1 VARCHAR CONSTRAINT PK PRIMARY KEY (pk1))";
+        int numRecords = 1010;
+        try (Connection conn = DriverManager.getConnection(getUrl())) {
+            conn.createStatement().execute(ddl);
+            Statement stmt = conn.createStatement();
+            for (int i = 0; i < numRecords ; i++) {
+                stmt.executeUpdate("UPSERT INTO " + tableName + " (pk1, v1) VALUES (" + i + ",'value')");
+            }
+            conn.commit();
+            conn.setAutoCommit(autoCommit);
+            String delete = "DELETE FROM " + tableName + " WHERE (pk1) <= (" + numRecords + ")" + (limit == null ? "" : (" limit " + limit));
+            try (PreparedStatement pstmt = conn.prepareStatement(delete)) {
+                int numberOfDeletes = pstmt.executeUpdate();
+                assertEquals(limit == null ? numRecords : limit, numberOfDeletes);
+                if (!autoCommit) {
+                    conn.commit();
+                }
+            }
+        }
+
     }
 }
 

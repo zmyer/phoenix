@@ -30,64 +30,50 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Map;
 import java.util.Properties;
 
-import org.apache.phoenix.end2end.BaseHBaseManagedTimeIT;
-import org.apache.phoenix.end2end.Shadower;
+import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.phoenix.end2end.ParallelStatsDisabledIT;
+import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.util.PropertiesUtil;
-import org.apache.phoenix.util.ReadOnlyProps;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.TestUtil;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-import com.google.common.collect.Maps;
-
 @RunWith(Parameterized.class)
-public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
+public class MutableRollbackIT extends ParallelStatsDisabledIT {
 	
 	private final boolean localIndex;
-	private String tableName1;
-    private String indexName1;
-    private String fullTableName1;
-    private String tableName2;
-    private String indexName2;
-    private String fullTableName2;
 
 	public MutableRollbackIT(boolean localIndex) {
 		this.localIndex = localIndex;
-		this.tableName1 = TestUtil.DEFAULT_DATA_TABLE_NAME + "_1_";
-        this.indexName1 = "IDX1";
-        this.fullTableName1 = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName1);
-        this.tableName2 = TestUtil.DEFAULT_DATA_TABLE_NAME + "_2_";
-        this.indexName2 = "IDX2";
-        this.fullTableName2 = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName2);
 	}
 	
-	@BeforeClass
-    @Shadower(classBeingShadowed = BaseHBaseManagedTimeIT.class)
-    public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(2);
-        props.put(QueryServices.DEFAULT_TABLE_ISTRANSACTIONAL_ATTRIB, Boolean.toString(true));
-        props.put(QueryServices.TRANSACTIONS_ENABLED, Boolean.toString(true));
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
+	@Parameters(name="MutableRollbackIT_localIndex={0}") // name is used by failsafe as file name in reports
+    public static Collection<Boolean> data() {
+        return Arrays.asList(new Boolean[] { false, true});
     }
 	
-	@Parameters(name="localIndex = {0}")
-    public static Collection<Boolean> data() {
-        return Arrays.asList(new Boolean[] {     
-                 false, true  
-           });
-    }
+	private static Connection getConnection() throws SQLException {
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        props.put(QueryServices.DEFAULT_TABLE_ISTRANSACTIONAL_ATTRIB, Boolean.toString(true));
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        return conn;
+	}
 	
     public void testRollbackOfUncommittedExistingKeyValueIndexUpdate() throws Exception {
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        Connection conn = getConnection();
+        String tableName1 = "TBL1_" + generateUniqueName();
+        String indexName1 = "IDX1_" + generateUniqueName();
+        String fullTableName1 = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName1);
+        String tableName2 = "TBL2_" + generateUniqueName();
+        String indexName2 = "IDX2_" + generateUniqueName();
+        String fullTableName2 = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName2);
         conn.setAutoCommit(false);
         try {
             Statement stmt = conn.createStatement();
@@ -187,7 +173,7 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
             stmt.executeUpdate("upsert into " + fullTableName2 + " values('a', 'b', 'c')");
             conn.commit();
 
-            assertDataAndIndexRows(stmt);
+            assertDataAndIndexRows(stmt, fullTableName1, fullTableName2, indexName1);
             stmt.executeUpdate("delete from " + fullTableName1 + " where  k='x'");
             stmt.executeUpdate("delete from " + fullTableName2 + " where  v1='b'");
             
@@ -206,7 +192,7 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
             
             conn.rollback();
-            assertDataAndIndexRows(stmt);
+            assertDataAndIndexRows(stmt, fullTableName1, fullTableName2, indexName1);
         } finally {
             conn.close();
         }
@@ -214,8 +200,13 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
 
 	@Test
     public void testRollbackOfUncommittedExistingRowKeyIndexUpdate() throws Exception {
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        String tableName1 = "TBL1_" + generateUniqueName();
+        String indexName1 = "IDX1_" + generateUniqueName();
+        String fullTableName1 = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName1);
+        String tableName2 = "TBL2_" + generateUniqueName();
+        String indexName2 = "IDX2_" + generateUniqueName();
+        String fullTableName2 = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName2);
+        Connection conn = getConnection();
         conn.setAutoCommit(false);
         try {
             Statement stmt = conn.createStatement();
@@ -252,9 +243,8 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
             
             stmt.executeUpdate("upsert into " + fullTableName1 + " values('x', 'z', 'a')");
             stmt.executeUpdate("upsert into " + fullTableName2 + " values('a', 'b', 'c')");
-            
-            assertDataAndIndexRows(stmt);
-            
+
+            assertDataAndIndexRows(stmt, fullTableName1, fullTableName2, indexName1);
             conn.rollback();
             
             //assert original row exists in fullTableName1
@@ -285,8 +275,7 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
             stmt.executeUpdate("upsert into " + fullTableName2 + " values('a', 'b', 'c')");
             conn.commit();
 
-            assertDataAndIndexRows(stmt);
-            stmt.executeUpdate("delete from " + fullTableName1 + " where  k='x'");
+            assertDataAndIndexRows(stmt, fullTableName1, fullTableName2, indexName1);            stmt.executeUpdate("delete from " + fullTableName1 + " where  k='x'");
             stmt.executeUpdate("delete from " + fullTableName2 + " where  v1='b'");
             
             //assert no rows exists in fullTableName1
@@ -304,14 +293,18 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
             assertFalse(rs.next());
             
             conn.rollback();
-            assertDataAndIndexRows(stmt);
-
+            assertDataAndIndexRows(stmt, fullTableName1, fullTableName2, indexName1);
+            PhoenixConnection phoenixConn = conn.unwrap(PhoenixConnection.class);
+            if(localIndex) {
+                dropTable(phoenixConn.getQueryServices().getAdmin(), conn, fullTableName1);
+                dropTable(phoenixConn.getQueryServices().getAdmin(), conn, fullTableName2);
+            }
         } finally {
             conn.close();
         }
     }
 	
-    private void assertDataAndIndexRows(Statement stmt) throws SQLException, IOException {
+    private void assertDataAndIndexRows(Statement stmt, String fullTableName1, String fullTableName2, String indexName1) throws SQLException, IOException {
         ResultSet rs;
         //assert new covered row key value exists in fullTableName1
         rs = stmt.executeQuery("select /*+ NO_INDEX */ k, v1, v2 from " + fullTableName1);
@@ -347,8 +340,10 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testMultiRollbackOfUncommittedExistingRowKeyIndexUpdate() throws Exception {
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        Connection conn = getConnection();
+        String tableName1 = "TBL1_" + generateUniqueName();
+        String indexName1 = "IDX1_" + generateUniqueName();
+        String fullTableName1 = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName1);
         conn.setAutoCommit(false);
         try {
             Statement stmt = conn.createStatement();
@@ -440,7 +435,8 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
             assertEquals("x", rs.getString(1));
             assertEquals("yyyy", rs.getString(2));
             assertFalse(rs.next());
-                        
+            PhoenixConnection phoenixConn = conn.unwrap(PhoenixConnection.class);
+            if(localIndex) dropTable(phoenixConn.getQueryServices().getAdmin(), conn, fullTableName1);
         } finally {
             conn.close();
         }
@@ -448,8 +444,10 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testCheckpointAndRollback() throws Exception {
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        Connection conn = getConnection();
+        String tableName1 = "TBL1_" + generateUniqueName();
+        String indexName1 = "IDX1_" + generateUniqueName();
+        String fullTableName1 = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName1);
         conn.setAutoCommit(false);
         try {
             Statement stmt = conn.createStatement();
@@ -503,9 +501,19 @@ public class MutableRollbackIT extends BaseHBaseManagedTimeIT {
             assertEquals("x", rs.getString(1));
             assertEquals("a", rs.getString(2));
             assertFalse(rs.next());
-
+            PhoenixConnection phoenixConn = conn.unwrap(PhoenixConnection.class);
+            if(localIndex) dropTable(phoenixConn.getQueryServices().getAdmin(), conn, fullTableName1);
         } finally {
             conn.close();
         }
     }
+
+    private void dropTable(HBaseAdmin admin, Connection conn, String tableName) throws SQLException, IOException {
+        conn.createStatement().execute("DROP TABLE IF EXISTS "+ tableName);
+        if(admin.tableExists(tableName)) {
+            admin.disableTable(TableName.valueOf(tableName));
+            admin.deleteTable(TableName.valueOf(tableName));
+        } 
+    }
+
 }

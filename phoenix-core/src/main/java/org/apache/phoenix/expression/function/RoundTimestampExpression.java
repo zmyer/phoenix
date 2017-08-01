@@ -25,14 +25,19 @@ import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.phoenix.expression.CoerceExpression;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.LiteralExpression;
+import org.apache.phoenix.parse.FunctionParseNode.Argument;
+import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
+import org.apache.phoenix.parse.FunctionParseNode.FunctionClassType;
 import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.schema.types.PDataType;
 import org.apache.phoenix.schema.types.PDataType.PDataCodec;
 import org.apache.phoenix.schema.types.PDate;
+import org.apache.phoenix.schema.types.PInteger;
 import org.apache.phoenix.schema.types.PTimestamp;
 import org.apache.phoenix.schema.types.PUnsignedDate;
 import org.apache.phoenix.schema.types.PUnsignedTimestamp;
+import org.apache.phoenix.schema.types.PVarchar;
 
 import com.google.common.collect.Lists;
 
@@ -47,14 +52,21 @@ import com.google.common.collect.Lists;
  * 
  * @since 3.0.0
  */
-
+@BuiltInFunction(name = RoundFunction.NAME,
+        args = {
+                @Argument(allowedTypes={PTimestamp.class}),
+                @Argument(allowedTypes={PVarchar.class, PInteger.class}, defaultValue = "null", isConstant=true),
+                @Argument(allowedTypes={PInteger.class}, defaultValue="1", isConstant=true)
+        },
+        classType = FunctionClassType.DERIVED
+)
 public class RoundTimestampExpression extends RoundDateExpression {
     
     private static final long HALF_OF_NANOS_IN_MILLI = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(1)/2;
 
     public RoundTimestampExpression() {}
     
-    private RoundTimestampExpression(List<Expression> children) {
+    public RoundTimestampExpression(List<Expression> children) {
         super(children);
     }
     
@@ -92,6 +104,9 @@ public class RoundTimestampExpression extends RoundDateExpression {
     @Override
     public boolean evaluate(Tuple tuple, ImmutableBytesWritable ptr) {
         if (children.get(0).evaluate(tuple, ptr)) {
+            if (ptr.getLength()==0) {
+                return true;
+            }
             SortOrder sortOrder = children.get(0).getSortOrder();
             PDataType dataType = getDataType();
             int nanos = dataType.getNanos(ptr, sortOrder);

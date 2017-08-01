@@ -17,16 +17,13 @@
  */
 package org.apache.phoenix.schema.stats;
 
+import static org.apache.phoenix.query.QueryServices.STATS_COLLECTION_ENABLED;
+import static org.apache.phoenix.query.QueryServices.STATS_ENABLED_ATTRIB;
+import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_STATS_COLLECTION_ENABLED;
+
 import java.io.IOException;
-import java.util.Set;
 
-import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
-import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
-import org.apache.phoenix.query.QueryServices;
-import org.apache.phoenix.util.SchemaUtil;
-
-import com.google.common.collect.Sets;
 
 /**
  * Provides new {@link StatisticsCollector} instances based on configuration settings for a
@@ -35,39 +32,27 @@ import com.google.common.collect.Sets;
 public class StatisticsCollectorFactory {
 
     public static StatisticsCollector createStatisticsCollector(RegionCoprocessorEnvironment env,
-            String tableName, long clientTimestamp, byte[] guidepostWidthBytes,
+            String tableName, long clientTimeStamp, byte[] guidepostWidthBytes,
             byte[] guidepostsPerRegionBytes) throws IOException {
-        if (statisticsEnabled(env)) {
-            return new DefaultStatisticsCollector(env, tableName, clientTimestamp, null,
-                    guidepostWidthBytes, guidepostsPerRegionBytes);
-        } else {
-            return new NoOpStatisticsCollector();
-        }
+        return createStatisticsCollector(env, tableName, clientTimeStamp, null, guidepostWidthBytes, guidepostsPerRegionBytes);
     }
 
     public static StatisticsCollector createStatisticsCollector(
             RegionCoprocessorEnvironment env, String tableName, long clientTimeStamp,
             byte[] storeName) throws IOException {
+        return createStatisticsCollector(env, tableName, clientTimeStamp, storeName, null, null);
+    }
+
+    public static StatisticsCollector createStatisticsCollector(
+            RegionCoprocessorEnvironment env, String tableName, long clientTimeStamp,
+            byte[] storeName, byte[] guidepostWidthBytes,
+            byte[] guidepostsPerRegionBytes) throws IOException {
         if (statisticsEnabled(env)) {
             return new DefaultStatisticsCollector(env, tableName, clientTimeStamp, storeName,
-                    null, null);
+                    guidepostWidthBytes, guidepostsPerRegionBytes);
         } else {
             return new NoOpStatisticsCollector();
         }
-    }
-
-    // TODO: make this declarative through new DISABLE_STATS column on SYSTEM.CATALOG table.
-    // Also useful would be a USE_CURRENT_TIME_FOR_STATS column on SYSTEM.CATALOG table.
-    private static final Set<TableName> DISABLE_STATS = Sets.newHashSetWithExpectedSize(3);
-    static {
-        DISABLE_STATS.add(TableName.valueOf(PhoenixDatabaseMetaData.SYSTEM_CATALOG_NAME));
-        DISABLE_STATS.add(TableName.valueOf(PhoenixDatabaseMetaData.SYSTEM_FUNCTION_NAME));
-        DISABLE_STATS.add(TableName.valueOf(PhoenixDatabaseMetaData.SYSTEM_SEQUENCE_NAME));
-        DISABLE_STATS.add(TableName.valueOf(PhoenixDatabaseMetaData.SYSTEM_STATS_NAME));
-        DISABLE_STATS.add(SchemaUtil.getPhysicalTableName(PhoenixDatabaseMetaData.SYSTEM_CATALOG_NAME_BYTES,true));
-        DISABLE_STATS.add(SchemaUtil.getPhysicalTableName(PhoenixDatabaseMetaData.SYSTEM_CATALOG_NAME_BYTES,true));
-        DISABLE_STATS.add(SchemaUtil.getPhysicalTableName(PhoenixDatabaseMetaData.SYSTEM_CATALOG_NAME_BYTES,true));
-        DISABLE_STATS.add(SchemaUtil.getPhysicalTableName(PhoenixDatabaseMetaData.SYSTEM_CATALOG_NAME_BYTES,true));
     }
     
     /**
@@ -77,8 +62,12 @@ public class StatisticsCollectorFactory {
      * use case for that.
      */
     private static boolean statisticsEnabled(RegionCoprocessorEnvironment env) {
-        return env.getConfiguration().getBoolean(QueryServices.STATS_ENABLED_ATTRIB, true) &&
-                !DISABLE_STATS.contains(env.getRegionInfo().getTable());
+        return (env.getConfiguration().getBoolean(STATS_COLLECTION_ENABLED,
+            DEFAULT_STATS_COLLECTION_ENABLED)
+            // old config left here for backward compatibility. TODO: remove in the next major release
+            && env.getConfiguration().getBoolean(STATS_ENABLED_ATTRIB, true)
+            )
+            && StatisticsUtil.isStatsEnabled(env.getRegionInfo().getTable());
     }
 
 }

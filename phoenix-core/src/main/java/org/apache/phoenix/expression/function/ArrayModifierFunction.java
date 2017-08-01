@@ -93,8 +93,6 @@ public abstract class ArrayModifierFunction extends ScalarFunction {
         }
         if (!arrayExpr.evaluate(tuple, ptr)) {
             return false;
-        } else if (ptr.getLength() == 0) {
-            return true;
         }
         int arrayLength = PArrayDataType.getArrayLength(ptr, baseDataType, arrayExpr.getMaxLength());
 
@@ -104,7 +102,7 @@ public abstract class ArrayModifierFunction extends ScalarFunction {
 
         otherExpr.evaluate(tuple, ptr);
 
-        checkSizeCompatibility(ptr, arrayExpr, baseDataType, otherExpr, otherExpressionType);
+        checkSizeCompatibility(ptr, otherExpr.getSortOrder(), arrayExpr, baseDataType, otherExpr, otherExpressionType);
         coerceBytes(ptr, arrayExpr, baseDataType, otherExpr, otherExpressionType);
         return modifierFunction(ptr, length, offset, arrayBytes, baseDataType, arrayLength, getMaxLength(),
                 arrayExpr);
@@ -117,11 +115,11 @@ public abstract class ArrayModifierFunction extends ScalarFunction {
         return false;
     }
 
-    protected void checkSizeCompatibility(ImmutableBytesWritable ptr, Expression arrayExpr,
+    protected void checkSizeCompatibility(ImmutableBytesWritable ptr, SortOrder sortOrder, Expression arrayExpr,
                                           PDataType baseDataType, Expression otherExpr, PDataType otherExpressionType) {
         if (!baseDataType.isSizeCompatible(ptr, null, otherExpressionType,
-                otherExpr.getMaxLength(), otherExpr.getScale(), arrayExpr.getMaxLength(),
-                arrayExpr.getScale())) {
+                sortOrder, otherExpr.getMaxLength(), otherExpr.getScale(),
+                arrayExpr.getMaxLength(), arrayExpr.getScale())) {
             throw new DataExceedsCapacityException("Values are not size compatible");
         }
     }

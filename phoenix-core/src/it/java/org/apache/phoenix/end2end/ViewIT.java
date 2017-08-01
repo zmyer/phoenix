@@ -36,6 +36,9 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.Properties;
 
+import org.apache.hadoop.hbase.HColumnDescriptor;
+import org.apache.hadoop.hbase.HTableDescriptor;
+import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.phoenix.compile.QueryPlan;
 import org.apache.phoenix.exception.SQLExceptionCode;
@@ -58,16 +61,17 @@ public class ViewIT extends BaseViewIT {
 		super(transactional);
 	}
 
-	@Test
-    public void testReadOnlyView() throws Exception {
+    @Test
+    public void testReadOnlyOnReadOnlyView() throws Exception {
         Connection earlierCon = DriverManager.getConnection(getUrl());
         Connection conn = DriverManager.getConnection(getUrl());
-		String ddl = "CREATE TABLE " + fullTableName + " (k INTEGER NOT NULL PRIMARY KEY, v1 DATE) "+ tableDDLOptions;
+        String ddl = "CREATE TABLE " + fullTableName + " (k INTEGER NOT NULL PRIMARY KEY, v1 DATE) "+ tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v (v2 VARCHAR) AS SELECT * FROM " + tableName + " WHERE k > 5";
+        String fullParentViewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullParentViewName + " (v2 VARCHAR) AS SELECT * FROM " + tableName + " WHERE k > 5";
         conn.createStatement().execute(ddl);
         try {
-            conn.createStatement().execute("UPSERT INTO v VALUES(1)");
+            conn.createStatement().execute("UPSERT INTO " + fullParentViewName + " VALUES(1)");
             fail();
         } catch (ReadOnlyTableException e) {
             
@@ -77,42 +81,37 @@ public class ViewIT extends BaseViewIT {
         }
         conn.commit();
         
-        analyzeTable(conn, "v", transactional);
+        analyzeTable(conn, fullParentViewName, transactional);
         
-        List<KeyRange> splits = getAllSplits(conn, "v");
+        List<KeyRange> splits = getAllSplits(conn, fullParentViewName);
         assertEquals(4, splits.size());
         
         int count = 0;
-        ResultSet rs = conn.createStatement().executeQuery("SELECT k FROM " + tableName);
+        ResultSet rs = conn.createStatement().executeQuery("SELECT k FROM " + fullTableName);
         while (rs.next()) {
             assertEquals(count++, rs.getInt(1));
         }
         assertEquals(10, count);
         
         count = 0;
-        rs = conn.createStatement().executeQuery("SELECT k FROM v");
+        rs = conn.createStatement().executeQuery("SELECT k FROM " + fullParentViewName);
         while (rs.next()) {
             count++;
             assertEquals(count + 5, rs.getInt(1));
         }
         assertEquals(4, count);
         count = 0;
-        rs = earlierCon.createStatement().executeQuery("SELECT k FROM v");
+        rs = earlierCon.createStatement().executeQuery("SELECT k FROM " + fullParentViewName);
         while (rs.next()) {
             count++;
             assertEquals(count + 5, rs.getInt(1));
         }
         assertEquals(4, count);
-    }
-
-    @Test
-    public void testReadOnlyOnReadOnlyView() throws Exception {
-        testReadOnlyView();
-        Connection conn = DriverManager.getConnection(getUrl());
-        String ddl = "CREATE VIEW v2 AS SELECT * FROM v WHERE k < 9";
+        String fullViewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName + " AS SELECT * FROM " + fullParentViewName + " WHERE k < 9";
         conn.createStatement().execute(ddl);
         try {
-            conn.createStatement().execute("UPSERT INTO v2 VALUES(1)");
+            conn.createStatement().execute("UPSERT INTO " + fullViewName + " VALUES(1)");
             fail();
         } catch (ReadOnlyTableException e) {
             
@@ -121,8 +120,8 @@ public class ViewIT extends BaseViewIT {
         }
 
         conn = DriverManager.getConnection(getUrl());
-        int count = 0;
-        ResultSet rs = conn.createStatement().executeQuery("SELECT k FROM v2");
+        count = 0;
+        rs = conn.createStatement().executeQuery("SELECT k FROM " + fullViewName);
         while (rs.next()) {
             count++;
             assertEquals(count + 5, rs.getInt(1));
@@ -142,20 +141,21 @@ public class ViewIT extends BaseViewIT {
     
     @Test
     public void testUpdatableOnUpdatableView() throws Exception {
-        testUpdatableView(null);
+        String viewName = testUpdatableView(null);
         Connection conn = DriverManager.getConnection(getUrl());
-        String ddl = "CREATE VIEW v2 AS SELECT * FROM v WHERE k3 = 2";
+        String fullViewName = "V_" + generateUniqueName();
+        String ddl = "CREATE VIEW " + fullViewName + " AS SELECT * FROM " + viewName + " WHERE k3 = 2";
         conn.createStatement().execute(ddl);
-        ResultSet rs = conn.createStatement().executeQuery("SELECT k1, k2, k3 FROM v2");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT k1, k2, k3 FROM " + fullViewName);
         assertTrue(rs.next());
         assertEquals(1, rs.getInt(1));
         assertEquals(109, rs.getInt(2));
         assertEquals(2, rs.getInt(3));
         assertFalse(rs.next());
 
-        conn.createStatement().execute("UPSERT INTO v2(k2) VALUES(122)");
+        conn.createStatement().execute("UPSERT INTO " + fullViewName + "(k2) VALUES(122)");
         conn.commit();
-        rs = conn.createStatement().executeQuery("SELECT k1, k2, k3 FROM v2 WHERE k2 >= 120");
+        rs = conn.createStatement().executeQuery("SELECT k1, k2, k3 FROM " + fullViewName + " WHERE k2 >= 120");
         assertTrue(rs.next());
         assertEquals(1, rs.getInt(1));
         assertEquals(122, rs.getInt(2));
@@ -163,14 +163,14 @@ public class ViewIT extends BaseViewIT {
         assertFalse(rs.next());
         
         try {
-            conn.createStatement().execute("UPSERT INTO v2(k2,k3) VALUES(123,3)");
+            conn.createStatement().execute("UPSERT INTO " + fullViewName + "(k2,k3) VALUES(123,3)");
             fail();
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.CANNOT_UPDATE_VIEW_COLUMN.getErrorCode(), e.getErrorCode());
         }
 
         try {
-            conn.createStatement().execute("UPSERT INTO v2(k2,k3) select k2, 3 from v2");
+            conn.createStatement().execute("UPSERT INTO " + fullViewName + "(k2,k3) select k2, 3 from " + fullViewName);
             fail();
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.CANNOT_UPDATE_VIEW_COLUMN.getErrorCode(), e.getErrorCode());
@@ -179,11 +179,12 @@ public class ViewIT extends BaseViewIT {
 
     @Test
     public void testReadOnlyOnUpdatableView() throws Exception {
-        testUpdatableView(null);
+        String viewName = testUpdatableView(null);
         Connection conn = DriverManager.getConnection(getUrl());
-        String ddl = "CREATE VIEW v2 AS SELECT * FROM v WHERE k3 > 1 and k3 < 50";
+        String fullViewName = "V_" + generateUniqueName();
+        String ddl = "CREATE VIEW " + fullViewName + " AS SELECT * FROM " + viewName + " WHERE k3 > 1 and k3 < 50";
         conn.createStatement().execute(ddl);
-        ResultSet rs = conn.createStatement().executeQuery("SELECT k1, k2, k3 FROM v2");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT k1, k2, k3 FROM " + fullViewName);
         assertTrue(rs.next());
         assertEquals(1, rs.getInt(1));
         assertEquals(109, rs.getInt(2));
@@ -191,7 +192,7 @@ public class ViewIT extends BaseViewIT {
         assertFalse(rs.next());
 
         try {
-            conn.createStatement().execute("UPSERT INTO v2 VALUES(1)");
+            conn.createStatement().execute("UPSERT INTO " + fullViewName + " VALUES(1)");
             fail();
         } catch (ReadOnlyTableException e) {
             
@@ -199,7 +200,7 @@ public class ViewIT extends BaseViewIT {
         
         conn.createStatement().execute("UPSERT INTO " + fullTableName + "(k1, k2,k3) VALUES(1, 122, 5)");
         conn.commit();
-        rs = conn.createStatement().executeQuery("SELECT k1, k2, k3 FROM v2 WHERE k2 >= 120");
+        rs = conn.createStatement().executeQuery("SELECT k1, k2, k3 FROM " + fullViewName + " WHERE k2 >= 120");
         assertTrue(rs.next());
         assertEquals(1, rs.getInt(1));
         assertEquals(122, rs.getInt(2));
@@ -212,32 +213,34 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v1(v2 VARCHAR, v3 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
+        String fullViewName1 = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName1 + "(v2 VARCHAR, v3 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
         conn.createStatement().execute(ddl);
         
         try {
-            conn.createStatement().execute("ALTER VIEW v1 DROP COLUMN v1");
+            conn.createStatement().execute("ALTER VIEW " + fullViewName1 + " DROP COLUMN v1");
             fail();
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.CANNOT_MUTATE_TABLE.getErrorCode(), e.getErrorCode());
         }
         
-        ddl = "CREATE VIEW v2 AS SELECT * FROM v1 WHERE v2 != 'foo'";
+        String fullViewName2 = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName2 + " AS SELECT * FROM " + fullViewName1 + " WHERE v2 != 'foo'";
         conn.createStatement().execute(ddl);
 
         try {
-            conn.createStatement().execute("ALTER VIEW v2 DROP COLUMN v1");
+            conn.createStatement().execute("ALTER VIEW " + fullViewName2 + " DROP COLUMN v1");
             fail();
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.CANNOT_MUTATE_TABLE.getErrorCode(), e.getErrorCode());
         }
         try {
-            conn.createStatement().execute("ALTER VIEW v2 DROP COLUMN v2");
+            conn.createStatement().execute("ALTER VIEW " + fullViewName2 + " DROP COLUMN v2");
             fail();
         } catch (SQLException e) {
             assertEquals(SQLExceptionCode.CANNOT_MUTATE_TABLE.getErrorCode(), e.getErrorCode());
         }
-        conn.createStatement().execute("ALTER VIEW v2 DROP COLUMN v3");
+        conn.createStatement().execute("ALTER VIEW " + fullViewName2 + " DROP COLUMN v3");
         
     }
     
@@ -245,13 +248,14 @@ public class ViewIT extends BaseViewIT {
     public void testReadOnlyViewWithCaseSensitiveTableNames() throws Exception {
         Connection earlierCon = DriverManager.getConnection(getUrl());
         Connection conn = DriverManager.getConnection(getUrl());
-        String caseSensitiveTableName = "\"case_SENSITIVE_table" + tableSuffix + "\"" ;
+        String caseSensitiveTableName = "\"t_" + generateUniqueName() + "\"" ;
         String ddl = "CREATE TABLE " + caseSensitiveTableName + " (k INTEGER NOT NULL PRIMARY KEY, v1 DATE)" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW \"v\" (v2 VARCHAR) AS SELECT * FROM " + caseSensitiveTableName + " WHERE k > 5";
+        String caseSensitiveViewName = "\"v_" + generateUniqueName() + "\"" ;
+        ddl = "CREATE VIEW " + caseSensitiveViewName + " (v2 VARCHAR) AS SELECT * FROM " + caseSensitiveTableName + " WHERE k > 5";
         conn.createStatement().execute(ddl);
         try {
-            conn.createStatement().execute("UPSERT INTO \"v\" VALUES(1)");
+            conn.createStatement().execute("UPSERT INTO " + caseSensitiveViewName + " VALUES(1)");
             fail();
         } catch (ReadOnlyTableException e) {
             
@@ -262,14 +266,14 @@ public class ViewIT extends BaseViewIT {
         conn.commit();
         
         int count = 0;
-        ResultSet rs = conn.createStatement().executeQuery("SELECT k FROM \"v\"");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT k FROM " + caseSensitiveViewName);
         while (rs.next()) {
             count++;
             assertEquals(count + 5, rs.getInt(1));
         }
         assertEquals(4, count);
         count = 0;
-        rs = earlierCon.createStatement().executeQuery("SELECT k FROM \"v\"");
+        rs = earlierCon.createStatement().executeQuery("SELECT k FROM " + caseSensitiveViewName);
         while (rs.next()) {
             count++;
             assertEquals(count + 5, rs.getInt(1));
@@ -282,10 +286,11 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (\"k\" INTEGER NOT NULL PRIMARY KEY, \"v1\" INTEGER, \"a\".v2 VARCHAR)" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v (v VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE \"k\" > 5 and \"v1\" > 1";
+        String viewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + viewName + " (v VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE \"k\" > 5 and \"v1\" > 1";
         conn.createStatement().execute(ddl);
         try {
-            conn.createStatement().execute("UPSERT INTO v VALUES(1)");
+            conn.createStatement().execute("UPSERT INTO " + viewName + " VALUES(1)");
             fail();
         } catch (ReadOnlyTableException e) {
             
@@ -296,7 +301,7 @@ public class ViewIT extends BaseViewIT {
         conn.commit();
         
         int count = 0;
-        ResultSet rs = conn.createStatement().executeQuery("SELECT \"k\", \"v1\",\"a\".v2 FROM v");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT \"k\", \"v1\",\"a\".v2 FROM " + viewName);
         while (rs.next()) {
             count++;
             assertEquals(count + 5, rs.getInt(1));
@@ -309,10 +314,11 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (k INTEGER NOT NULL PRIMARY KEY, v1 INTEGER, v2 DATE)" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v (v VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE v2 > CURRENT_DATE()-5 AND v2 > DATE '2010-01-01'";
+        String viewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + viewName + " (v VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE v2 > CURRENT_DATE()-5 AND v2 > DATE '2010-01-01'";
         conn.createStatement().execute(ddl);
         try {
-            conn.createStatement().execute("UPSERT INTO v VALUES(1)");
+            conn.createStatement().execute("UPSERT INTO " + viewName + " VALUES(1)");
             fail();
         } catch (ReadOnlyTableException e) {
             
@@ -323,7 +329,7 @@ public class ViewIT extends BaseViewIT {
         conn.commit();
         
         int count = 0;
-        ResultSet rs = conn.createStatement().executeQuery("SELECT k FROM v");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT k FROM " + viewName);
         while (rs.next()) {
             assertEquals(count, rs.getInt(1));
             count++;
@@ -347,40 +353,45 @@ public class ViewIT extends BaseViewIT {
         Properties props = new Properties();
         props.setProperty(QueryServices.IS_NAMESPACE_MAPPING_ENABLED, Boolean.toString(isNamespaceMapped));
         Connection conn = DriverManager.getConnection(getUrl(),props);
-        String fullTableName = "s1.t" + tableSuffix + (isNamespaceMapped ? "_N" : "");
+        String schemaName1 = "S_" + generateUniqueName();
+        String fullTableName1 = SchemaUtil.getTableName(schemaName1, tableName);
         if (isNamespaceMapped) {
-            conn.createStatement().execute("CREATE SCHEMA IF NOT EXISTS s1");
+            conn.createStatement().execute("CREATE SCHEMA IF NOT EXISTS " + schemaName1);
         }
-		String ddl = "CREATE TABLE " + fullTableName + " (k INTEGER NOT NULL PRIMARY KEY, v1 DATE)" + tableDDLOptions;
+		String ddl = "CREATE TABLE " + fullTableName1 + " (k INTEGER NOT NULL PRIMARY KEY, v1 DATE)" + tableDDLOptions;
         HBaseAdmin admin = conn.unwrap(PhoenixConnection.class).getQueryServices().getAdmin();
         conn.createStatement().execute(ddl);
-        assertTrue(admin.tableExists(SchemaUtil.getPhysicalTableName(SchemaUtil.normalizeIdentifier(fullTableName),
+        assertTrue(admin.tableExists(SchemaUtil.getPhysicalTableName(SchemaUtil.normalizeIdentifier(fullTableName1),
                 conn.unwrap(PhoenixConnection.class).getQueryServices().getProps())));
-        ddl = "CREATE VIEW s2.v1 (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 5";
+        String viewName = "V_" + generateUniqueName();
+        String viewSchemaName = "S_" + generateUniqueName();
+        String fullViewName1 = SchemaUtil.getTableName(viewSchemaName, viewName);
+        ddl = "CREATE VIEW " + fullViewName1 + " (v2 VARCHAR) AS SELECT * FROM " + fullTableName1 + " WHERE k > 5";
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v2 (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 5";
+        String fullViewName2 = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName2 + " (v2 VARCHAR) AS SELECT * FROM " + fullTableName1 + " WHERE k > 5";
         conn.createStatement().execute(ddl);
-        conn.createStatement().executeQuery("SELECT * FROM s2.v1");
-        conn.createStatement().executeQuery("SELECT * FROM v2");
-        ddl = "DROP VIEW v1";
+        conn.createStatement().executeQuery("SELECT * FROM " + fullViewName1);
+        conn.createStatement().executeQuery("SELECT * FROM " + fullViewName2);
+        ddl = "DROP VIEW " + viewName;
         try {
             conn.createStatement().execute(ddl);
             fail();
         } catch (TableNotFoundException ignore) {
         }
-        ddl = "DROP VIEW s2.v1";
+        ddl = "DROP VIEW " + fullViewName1;
         conn.createStatement().execute(ddl);
-        ddl = "DROP VIEW s2.v2";
+        ddl = "DROP VIEW " + SchemaUtil.getTableName(viewSchemaName, generateUniqueName());
         try {
             conn.createStatement().execute(ddl);
             fail();
         } catch (TableNotFoundException ignore) {
         }
-        ddl = "DROP TABLE " + fullTableName;
-        validateCannotDropTableWithChildViewsWithoutCascade(conn, fullTableName);
-        ddl = "DROP VIEW v2";
+        ddl = "DROP TABLE " + fullTableName1;
+        validateCannotDropTableWithChildViewsWithoutCascade(conn, fullTableName1);
+        ddl = "DROP VIEW " + fullViewName2;
         conn.createStatement().execute(ddl);
-        ddl = "DROP TABLE " + fullTableName;
+        ddl = "DROP TABLE " + fullTableName1;
         conn.createStatement().execute(ddl);
     }
 
@@ -390,7 +401,8 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v1(v2 VARCHAR, v3 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
+        String viewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + viewName + "(v2 VARCHAR, v3 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
         conn.createStatement().execute(ddl);
         
         try {
@@ -404,13 +416,18 @@ public class ViewIT extends BaseViewIT {
     @Test
     public void testViewAndTableAndDropCascade() throws Exception {
     	// Setup
-    	String fullTableName = "s2.t"+tableSuffix;
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + "  (k INTEGER NOT NULL PRIMARY KEY, v1 DATE)" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW s2.v1 (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 5";
+        String viewName = "V_" + generateUniqueName();
+        String viewSchemaName = "S_" + generateUniqueName();
+        String fullViewName1 = SchemaUtil.getTableName(viewSchemaName, viewName);
+        ddl = "CREATE VIEW " + fullViewName1 + " (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 5";
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW s2.v2 (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 10";
+        ddl = "CREATE LOCAL INDEX idx on " + fullViewName1 + "(v2)";
+        conn.createStatement().execute(ddl);
+        String fullViewName2 = SchemaUtil.getTableName(viewSchemaName, "V_" + generateUniqueName());
+        ddl = "CREATE VIEW " + fullViewName2 + "(v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 10";
         conn.createStatement().execute(ddl);
 
         validateCannotDropTableWithChildViewsWithoutCascade(conn, fullTableName);
@@ -418,8 +435,8 @@ public class ViewIT extends BaseViewIT {
         // Execute DROP...CASCADE
         conn.createStatement().execute("DROP TABLE " + fullTableName + " CASCADE");
         
-        validateViewDoesNotExist(conn, "s2.v1");
-        validateViewDoesNotExist(conn, "s2.v2");
+        validateViewDoesNotExist(conn, fullViewName1);
+        validateViewDoesNotExist(conn, fullViewName2);
     }
     
     @Test
@@ -427,21 +444,26 @@ public class ViewIT extends BaseViewIT {
         
     	// Setup - Tables and Views with Indexes
     	Connection conn = DriverManager.getConnection(getUrl());
-    	String fullTableName = "s3.t"+tableSuffix;
 		if (tableDDLOptions.length()!=0)
 			tableDDLOptions+=",";
 		tableDDLOptions+="IMMUTABLE_ROWS=true";
         String ddl = "CREATE TABLE " + fullTableName + " (k INTEGER NOT NULL PRIMARY KEY, v1 DATE)" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE INDEX IDX1 ON " + fullTableName + " (v1)";
+        String viewSchemaName = "S_" + generateUniqueName();
+        String fullViewName1 = SchemaUtil.getTableName(viewSchemaName, "V_" + generateUniqueName());
+        String fullViewName2 = SchemaUtil.getTableName(viewSchemaName, "V_" + generateUniqueName());
+        String indexName1 = "I_" + generateUniqueName();
+        String indexName2 = "I_" + generateUniqueName();
+        String indexName3 = "I_" + generateUniqueName();
+        ddl = "CREATE INDEX " + indexName1 + " ON " + fullTableName + " (v1)";
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW s3.v1 (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 5";
+        ddl = "CREATE VIEW " + fullViewName1 + " (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 5";
         conn.createStatement().execute(ddl);
-        ddl = "CREATE INDEX IDX2 ON s3.v1 (v2)";
+        ddl = "CREATE INDEX " + indexName2 + " ON " + fullViewName1 + " (v2)";
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW s3.v2 (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 10";
+        ddl = "CREATE VIEW " + fullViewName2 + " (v2 VARCHAR) AS SELECT * FROM " + fullTableName + " WHERE k > 10";
         conn.createStatement().execute(ddl);
-        ddl = "CREATE INDEX IDX3 ON s3.v2 (v2)";
+        ddl = "CREATE INDEX " + indexName3 + " ON " + fullViewName2 + " (v2)";
         conn.createStatement().execute(ddl);
 
         validateCannotDropTableWithChildViewsWithoutCascade(conn, fullTableName);
@@ -450,8 +472,8 @@ public class ViewIT extends BaseViewIT {
         conn.createStatement().execute("DROP TABLE " + fullTableName + " CASCADE");
         
         // Validate Views were deleted - Try and delete child views, should throw TableNotFoundException
-        validateViewDoesNotExist(conn, "s3.v1");
-        validateViewDoesNotExist(conn, "s3.v2");
+        validateViewDoesNotExist(conn, fullViewName1);
+        validateViewDoesNotExist(conn, fullViewName2);
     }
 
 
@@ -467,11 +489,11 @@ public class ViewIT extends BaseViewIT {
 	}
 
 
-	private void validateViewDoesNotExist(Connection conn, String viewName)	throws SQLException {
+	private void validateViewDoesNotExist(Connection conn, String fullViewName)	throws SQLException {
 		try {
-        	String ddl1 = "DROP VIEW " + viewName;
+        	String ddl1 = "DROP VIEW " + fullViewName;
             conn.createStatement().execute(ddl1);
-            fail("View s3.v1 should have been deleted when parent was dropped");
+            fail("View " + fullViewName + " should have been deleted when parent was dropped");
         } catch (TableNotFoundException e) {
         	//Expected
         }
@@ -496,10 +518,14 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + "  (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, k3 DECIMAL, s1 VARCHAR, s2 VARCHAR CONSTRAINT pk PRIMARY KEY (k1, k2, k3))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        conn.createStatement().execute("CREATE " + (localIndex ? "LOCAL " : "") + " INDEX i1 ON " + fullTableName + "(k3, k2) INCLUDE(s1, s2)");
-        conn.createStatement().execute("CREATE INDEX i2 ON " + fullTableName + "(k3, k2, s2)");
+        String indexName1 = "I_" + generateUniqueName();
+        String fullIndexName1 = SchemaUtil.getTableName(schemaName, indexName1);
+        conn.createStatement().execute("CREATE " + (localIndex ? "LOCAL " : "") + " INDEX " + indexName1 + " ON " + fullTableName + "(k3, k2) INCLUDE(s1, s2)");
+        String indexName2 = "I_" + generateUniqueName();
+        conn.createStatement().execute("CREATE INDEX " + indexName2 + " ON " + fullTableName + "(k3, k2, s2)");
         
-        ddl = "CREATE VIEW v AS SELECT * FROM " + fullTableName + " WHERE s1 = 'foo'";
+        String fullViewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName + " AS SELECT * FROM " + fullTableName + " WHERE s1 = 'foo'";
         conn.createStatement().execute(ddl);
         String[] s1Values = {"foo","bar"};
         for (int i = 0; i < 10; i++) {
@@ -507,14 +533,15 @@ public class ViewIT extends BaseViewIT {
         }
         conn.commit();
         
-        rs = conn.createStatement().executeQuery("SELECT count(*) FROM v");
+        rs = conn.createStatement().executeQuery("SELECT count(*) FROM " + fullViewName);
         assertTrue(rs.next());
         assertEquals(5, rs.getLong(1));
         assertFalse(rs.next());
 
-        conn.createStatement().execute("CREATE INDEX vi1 on v(k2)");
+        String viewIndexName = "I_" + generateUniqueName();
+        conn.createStatement().execute("CREATE INDEX " + viewIndexName + " on " + fullViewName + "(k2)");
         
-        String query = "SELECT k2 FROM v WHERE k2 IN (100,109) AND k3 IN (1,2) AND s2='bas'";
+        String query = "SELECT k2 FROM " + fullViewName + " WHERE k2 IN (100,109) AND k3 IN (1,2) AND s2='bas'";
         rs = conn.createStatement().executeQuery(query);
         assertTrue(rs.next());
         assertEquals(100, rs.getInt(1));
@@ -523,12 +550,12 @@ public class ViewIT extends BaseViewIT {
         String queryPlan = QueryUtil.getExplainPlan(rs);
         // Assert that in either case (local & global) that index from physical table used for query on view.
         if (localIndex) {
-            assertEquals("CLIENT PARALLEL 1-WAY SKIP SCAN ON 4 KEYS OVER _LOCAL_IDX_" + fullTableName + " [-32768,1,100] - [-32768,2,109]\n" + 
+            assertEquals("CLIENT PARALLEL 1-WAY SKIP SCAN ON 4 KEYS OVER " + fullTableName + " [1,1,100] - [1,2,109]\n" + 
                     "    SERVER FILTER BY (\"S2\" = 'bas' AND \"S1\" = 'foo')\n" + 
                     "CLIENT MERGE SORT", queryPlan);
         } else {
             assertEquals(
-                    "CLIENT PARALLEL 1-WAY SKIP SCAN ON 4 KEYS OVER I1 [1,100] - [2,109]\n" + 
+                    "CLIENT PARALLEL 1-WAY SKIP SCAN ON 4 KEYS OVER " + fullIndexName1 + " [1,100] - [2,109]\n" + 
                     "    SERVER FILTER BY (\"S2\" = 'bas' AND \"S1\" = 'foo')", queryPlan);
         }
     }    
@@ -538,16 +565,17 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v1(v2 VARCHAR, k3 VARCHAR PRIMARY KEY) AS SELECT * FROM " + fullTableName + " WHERE K1 = 1";
+        String fullViewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName + "(v2 VARCHAR, k3 VARCHAR PRIMARY KEY) AS SELECT * FROM " + fullTableName + " WHERE K1 = 1";
         conn.createStatement().execute(ddl);
 
         // assert PK metadata
-        ResultSet rs = conn.getMetaData().getPrimaryKeys(null, null, "V1");
+        ResultSet rs = conn.getMetaData().getPrimaryKeys(null, null, fullViewName);
         assertPKs(rs, new String[] {"K1", "K2", "K3"});
         
         // sanity check upserts into base table and view
         conn.createStatement().executeUpdate("upsert into " + fullTableName + " (k1, k2, v1) values (1, 1, 1)");
-        conn.createStatement().executeUpdate("upsert into v1 (k1, k2, k3, v2) values (1, 1, 'abc', 'def')");
+        conn.createStatement().executeUpdate("upsert into " + fullViewName + " (k1, k2, k3, v2) values (1, 1, 'abc', 'def')");
         conn.commit();
         
         // expect 2 rows in the base table
@@ -556,7 +584,7 @@ public class ViewIT extends BaseViewIT {
         assertEquals(2, rs.getInt(1));
         
         // expect 2 row in the view
-        rs = conn.createStatement().executeQuery("select count(*) from v1");
+        rs = conn.createStatement().executeQuery("select count(*) from " + fullViewName);
         assertTrue(rs.next());
         assertEquals(2, rs.getInt(1));
     }
@@ -566,11 +594,12 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v1(v2 VARCHAR, k3 VARCHAR, k4 INTEGER NOT NULL, CONSTRAINT PKVEW PRIMARY KEY (k3, k4)) AS SELECT * FROM " + fullTableName + " WHERE K1 = 1";
+        String fullViewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName + "(v2 VARCHAR, k3 VARCHAR, k4 INTEGER NOT NULL, CONSTRAINT PKVEW PRIMARY KEY (k3, k4)) AS SELECT * FROM " + fullTableName + " WHERE K1 = 1";
         conn.createStatement().execute(ddl);
 
         // assert PK metadata
-        ResultSet rs = conn.getMetaData().getPrimaryKeys(null, null, "V1");
+        ResultSet rs = conn.getMetaData().getPrimaryKeys(null, null, fullViewName);
         assertPKs(rs, new String[] {"K1", "K2", "K3", "K4"});
     }
     
@@ -580,13 +609,14 @@ public class ViewIT extends BaseViewIT {
         String fullTableName2 = fullTableName;
 		String ddl = "CREATE TABLE " + fullTableName2 + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v1  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
+        String fullViewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName + "  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
         conn.createStatement().execute(ddl);
-        ddl = "ALTER VIEW V1 ADD k3 VARCHAR PRIMARY KEY, k4 VARCHAR PRIMARY KEY, v2 INTEGER";
+        ddl = "ALTER VIEW " + fullViewName + " ADD k3 VARCHAR PRIMARY KEY, k4 VARCHAR PRIMARY KEY, v2 INTEGER";
         conn.createStatement().execute(ddl);
 
         // assert PK metadata
-        ResultSet rs = conn.getMetaData().getPrimaryKeys(null, null, "V1");
+        ResultSet rs = conn.getMetaData().getPrimaryKeys(null, null, fullViewName);
         assertPKs(rs, new String[] {"K1", "K2", "K3", "K4"});
     }
     
@@ -595,16 +625,18 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (k1 INTEGER NOT NULL, k2 VARCHAR NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v1  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
+        String fullViewName1 = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName1 + "  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
         conn.createStatement().execute(ddl);
-        ddl = "ALTER VIEW V1 ADD k3 VARCHAR PRIMARY KEY, k4 VARCHAR PRIMARY KEY, v2 INTEGER";
+        ddl = "ALTER VIEW " + fullViewName1 + " ADD k3 VARCHAR PRIMARY KEY, k4 VARCHAR PRIMARY KEY, v2 INTEGER";
         try {
             conn.createStatement().execute(ddl);
             fail("View cannot extend PK if parent's last PK is variable length. See https://issues.apache.org/jira/browse/PHOENIX-978.");
         } catch (SQLException e) {
             assertEquals(CANNOT_MODIFY_VIEW_PK.getErrorCode(), e.getErrorCode());
         }
-        ddl = "CREATE VIEW v2 (k3 VARCHAR PRIMARY KEY)  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
+        String fullViewName2 = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName2 + " (k3 VARCHAR PRIMARY KEY)  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
         try {
         	conn.createStatement().execute(ddl);
         } catch (SQLException e) {
@@ -617,9 +649,10 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v1  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
+        String fullViewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName + "  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
         conn.createStatement().execute(ddl);
-        ddl = "ALTER VIEW V1 ADD k3 VARCHAR PRIMARY KEY, k2 VARCHAR PRIMARY KEY, v2 INTEGER";
+        ddl = "ALTER VIEW " + fullViewName + " ADD k3 VARCHAR PRIMARY KEY, k2 VARCHAR PRIMARY KEY, v2 INTEGER";
         conn.createStatement().execute(ddl);
     }
     
@@ -628,10 +661,11 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String ddl = "CREATE TABLE " + fullTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(ddl);
-        ddl = "CREATE VIEW v1  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
+        String fullViewName = "V_" + generateUniqueName();
+        ddl = "CREATE VIEW " + fullViewName + "  AS SELECT * FROM " + fullTableName + " WHERE v1 = 1.0";
         conn.createStatement().execute(ddl);
         try {
-            ddl = "ALTER VIEW V1 ADD k3 VARCHAR NOT NULL PRIMARY KEY"; 
+            ddl = "ALTER VIEW " + fullViewName + " ADD k3 VARCHAR NOT NULL PRIMARY KEY"; 
             conn.createStatement().execute(ddl);
             fail("can only add nullable PKs via ALTER VIEW/TABLE");
         } catch (SQLException e) {
@@ -644,22 +678,110 @@ public class ViewIT extends BaseViewIT {
         Connection conn = DriverManager.getConnection(getUrl());
         String sql = "CREATE TABLE " + fullTableName + " (k1 INTEGER NOT NULL, k2 INTEGER NOT NULL, v1 DECIMAL, CONSTRAINT pk PRIMARY KEY (k1, k2))" + tableDDLOptions;
         conn.createStatement().execute(sql);
-        sql = "CREATE VIEW v1  AS SELECT * FROM " + fullTableName;
+        String fullViewName1 = "V_" + generateUniqueName();
+        sql = "CREATE VIEW " + fullViewName1 + "  AS SELECT * FROM " + fullTableName;
         conn.createStatement().execute(sql);
-        sql = "CREATE VIEW v2  AS SELECT * FROM " + fullTableName + " WHERE k1 = 1.0";
+        String fullViewName2 = "V_" + generateUniqueName();
+        sql = "CREATE VIEW " + fullViewName2 + "  AS SELECT * FROM " + fullTableName + " WHERE k1 = 1.0";
         conn.createStatement().execute(sql);
         
-        sql = "SELECT * FROM v1 order by k1, k2";
+        sql = "SELECT * FROM " + fullViewName1 + " order by k1, k2";
         PreparedStatement stmt = conn.prepareStatement(sql);
         QueryPlan plan = PhoenixRuntime.getOptimizedQueryPlan(stmt);
         assertEquals(0, plan.getOrderBy().getOrderByExpressions().size());
         
-        sql = "SELECT * FROM v2 order by k1, k2";
+        sql = "SELECT * FROM " + fullViewName2 + " order by k1, k2";
         stmt = conn.prepareStatement(sql);
         plan = PhoenixRuntime.getOptimizedQueryPlan(stmt);
         assertEquals(0, plan.getOrderBy().getOrderByExpressions().size());
     }
-    
+
+    @Test
+    public void testCreateViewWithUpdateCacheFrquency() throws Exception {
+      Properties props = new Properties();
+      Connection conn1 = DriverManager.getConnection(getUrl(), props);
+      conn1.setAutoCommit(true);
+      String TABLE_NAME="UpdateCacheViewTest"+System.currentTimeMillis();
+      String VIEW_NAME="VIEW_"+System.currentTimeMillis();
+      conn1.createStatement().execute(
+        "CREATE TABLE "+TABLE_NAME+" (k VARCHAR PRIMARY KEY, v1 VARCHAR, v2 VARCHAR) UPDATE_CACHE_FREQUENCY=1000000");
+      conn1.createStatement().execute("upsert into "+TABLE_NAME+" values ('row1', 'value1', 'key1')");
+      conn1.createStatement().execute(
+        "CREATE VIEW "+VIEW_NAME+" (v43 VARCHAR) AS SELECT * FROM "+TABLE_NAME+" WHERE v1 = 'value1'");
+      ResultSet rs = conn1.createStatement()
+          .executeQuery("SELECT * FROM "+TABLE_NAME+" WHERE v1 = 'value1'");
+      assertTrue(rs.next());
+    }
+
+    @Test
+    public void testCreateViewMappedToExistingHbaseTableWithNamespaceMappingEnabled() throws Exception {
+        final String NS = "NS_" + generateUniqueName();
+        final String TBL = "TBL_" + generateUniqueName();
+        final String CF = "CF";
+
+        Properties props = new Properties();
+        props.setProperty(QueryServices.IS_NAMESPACE_MAPPING_ENABLED, Boolean.TRUE.toString());
+
+        try (Connection conn = DriverManager.getConnection(getUrl(), props);
+            HBaseAdmin admin = conn.unwrap(PhoenixConnection.class).getQueryServices().getAdmin()) {
+
+            conn.createStatement().execute("CREATE SCHEMA " + NS);
+
+            // test for a view that is in non-default schema
+            {
+                HTableDescriptor desc = new HTableDescriptor(TableName.valueOf(NS, TBL));
+                desc.addFamily(new HColumnDescriptor(CF));
+                admin.createTable(desc);
+
+                String view = NS + "." + TBL;
+                conn.createStatement().execute(
+                    "CREATE VIEW " + view + " (PK VARCHAR PRIMARY KEY, " + CF + ".COL VARCHAR)");
+
+                assertTrue(QueryUtil.getExplainPlan(
+                    conn.createStatement().executeQuery("explain select * from " + view))
+                    .contains(NS + ":" + TBL));
+
+                conn.createStatement().execute("DROP VIEW " + view);
+            }
+
+            // test for a view whose name contains a dot (e.g. "AAA.BBB") in default schema (for backward compatibility)
+            {
+                HTableDescriptor desc = new HTableDescriptor(TableName.valueOf(NS + "." + TBL));
+                desc.addFamily(new HColumnDescriptor(CF));
+                admin.createTable(desc);
+
+                String view = "\"" + NS + "." + TBL + "\"";
+                conn.createStatement().execute(
+                    "CREATE VIEW " + view + " (PK VARCHAR PRIMARY KEY, " + CF + ".COL VARCHAR)");
+
+                assertTrue(QueryUtil.getExplainPlan(
+                    conn.createStatement().executeQuery("explain select * from " + view))
+                    .contains(NS + "." + TBL));
+
+                conn.createStatement().execute("DROP VIEW " + view);
+            }
+
+            // test for a view whose name contains a dot (e.g. "AAA.BBB") in non-default schema
+            {
+                HTableDescriptor desc = new HTableDescriptor(TableName.valueOf(NS, NS + "." + TBL));
+                desc.addFamily(new HColumnDescriptor(CF));
+                admin.createTable(desc);
+
+                String view = NS + ".\"" + NS + "." + TBL + "\"";
+                conn.createStatement().execute(
+                    "CREATE VIEW " + view + " (PK VARCHAR PRIMARY KEY, " + CF + ".COL VARCHAR)");
+
+                assertTrue(QueryUtil.getExplainPlan(
+                    conn.createStatement().executeQuery("explain select * from " + view))
+                    .contains(NS + ":" + NS + "." + TBL));
+
+                conn.createStatement().execute("DROP VIEW " + view);
+            }
+
+            conn.createStatement().execute("DROP SCHEMA " + NS);
+        }
+    }
+
     private void assertPKs(ResultSet rs, String[] expectedPKs) throws SQLException {
         List<String> pkCols = newArrayListWithExpectedSize(expectedPKs.length);
         while (rs.next()) {

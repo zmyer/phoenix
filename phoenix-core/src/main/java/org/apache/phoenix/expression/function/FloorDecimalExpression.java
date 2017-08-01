@@ -17,6 +17,7 @@
  */
 package org.apache.phoenix.expression.function;
 
+import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.util.List;
@@ -24,15 +25,17 @@ import java.util.List;
 import org.apache.phoenix.expression.Determinism;
 import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.LiteralExpression;
-import org.apache.phoenix.schema.types.PDecimal;
-
-import com.google.common.collect.Lists;
-
-import java.math.BigDecimal;
-
 import org.apache.phoenix.query.KeyRange;
+import org.apache.phoenix.schema.types.PDecimal;
 import org.apache.phoenix.schema.types.PInteger;
 import org.apache.phoenix.schema.types.PLong;
+import org.apache.phoenix.schema.types.PVarchar;
+import org.apache.phoenix.schema.types.PDecimal;
+import org.apache.phoenix.parse.FunctionParseNode.BuiltInFunction;
+import org.apache.phoenix.parse.FunctionParseNode.Argument;
+import org.apache.phoenix.parse.FunctionParseNode.FunctionClassType;
+
+import com.google.common.collect.Lists;
 
 /**
  *
@@ -42,11 +45,19 @@ import org.apache.phoenix.schema.types.PLong;
  *
  * @since 3.0.0
  */
+@BuiltInFunction(name = FloorFunction.NAME,
+        args = {
+                @Argument(allowedTypes={PDecimal.class}),
+                @Argument(allowedTypes={PVarchar.class, PInteger.class}, defaultValue = "null", isConstant=true),
+                @Argument(allowedTypes={PInteger.class}, defaultValue="1", isConstant=true)
+        },
+        classType = FunctionClassType.DERIVED
+)
 public class FloorDecimalExpression extends RoundDecimalExpression {
 
     public FloorDecimalExpression() {}
 
-    private FloorDecimalExpression(List<Expression> children) {
+    public FloorDecimalExpression(List<Expression> children) {
         super(children);
     }
 

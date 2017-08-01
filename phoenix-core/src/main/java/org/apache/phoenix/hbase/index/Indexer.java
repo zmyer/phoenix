@@ -18,11 +18,17 @@
 package org.apache.phoenix.hbase.index;
 
 import static org.apache.phoenix.hbase.index.util.IndexManagementUtil.rethrowIndexingException;
+import static org.apache.phoenix.hbase.index.write.IndexWriterUtils.DEFAULT_INDEX_WRITER_RPC_PAUSE;
+import static org.apache.phoenix.hbase.index.write.IndexWriterUtils.DEFAULT_INDEX_WRITER_RPC_RETRIES_NUMBER;
+import static org.apache.phoenix.hbase.index.write.IndexWriterUtils.INDEX_WRITER_RPC_PAUSE;
+import static org.apache.phoenix.hbase.index.write.IndexWriterUtils.INDEX_WRITER_RPC_RETRIES_NUMBER;
 
 import java.io.IOException;
+import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -32,26 +38,40 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Durability;
+import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
+import org.apache.hadoop.hbase.ipc.RpcControllerFactory;
+import org.apache.hadoop.hbase.ipc.controller.InterRegionServerIndexRpcControllerFactory;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.regionserver.KeyValueScanner;
 import org.apache.hadoop.hbase.regionserver.MiniBatchOperationInProgress;
+import org.apache.hadoop.hbase.regionserver.OperationStatus;
+import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.regionserver.ScanType;
 import org.apache.hadoop.hbase.regionserver.Store;
 import org.apache.hadoop.hbase.regionserver.wal.HLogKey;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
+import org.apache.hadoop.hbase.security.User;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
+import org.apache.htrace.Span;
+import org.apache.htrace.Trace;
+import org.apache.htrace.TraceScope;
+import org.apache.phoenix.coprocessor.DelegateRegionCoprocessorEnvironment;
 import org.apache.phoenix.hbase.index.builder.IndexBuildManager;
 import org.apache.phoenix.hbase.index.builder.IndexBuilder;
+import org.apache.phoenix.hbase.index.metrics.MetricsIndexerSource;
+import org.apache.phoenix.hbase.index.metrics.MetricsIndexerSourceFactory;
 import org.apache.phoenix.hbase.index.table.HTableInterfaceReference;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 import org.apache.phoenix.hbase.index.util.IndexManagementUtil;
@@ -59,14 +79,14 @@ import org.apache.phoenix.hbase.index.util.VersionUtil;
 import org.apache.phoenix.hbase.index.wal.IndexedKeyValue;
 import org.apache.phoenix.hbase.index.write.IndexFailurePolicy;
 import org.apache.phoenix.hbase.index.write.IndexWriter;
+import org.apache.phoenix.hbase.index.write.RecoveryIndexWriter;
 import org.apache.phoenix.hbase.index.write.recovery.PerRegionIndexWriteCache;
 import org.apache.phoenix.hbase.index.write.recovery.StoreFailuresInCachePolicy;
-import org.apache.phoenix.hbase.index.write.recovery.TrackingParallelWriterIndexCommitter;
 import org.apache.phoenix.trace.TracingUtils;
 import org.apache.phoenix.trace.util.NullSpan;
-import org.apache.htrace.Span;
-import org.apache.htrace.Trace;
-import org.apache.htrace.TraceScope;
+import org.apache.phoenix.util.EnvironmentEdgeManager;
+import org.apache.phoenix.util.PropertiesUtil;
+import org.apache.phoenix.util.ServerUtil;
 
 import com.google.common.collect.Multimap;
 
@@ -85,6 +105,11 @@ import com.google.common.collect.Multimap;
  * nothing does. Currently, we do not support mixed-durability updates within a single batch. If you
  * want to have different durability levels, you only need to split the updates into two different
  * batches.
+ * <p>
+ * We don't need to implement {@link #postPut(ObserverContext, Put, WALEdit, Durability)} and
+ * {@link #postDelete(ObserverContext, Delete, WALEdit, Durability)} hooks because 
+ * Phoenix always does batch mutations.
+ * <p>
  */
 public class Indexer extends BaseRegionObserver {
 
@@ -92,6 +117,7 @@ public class Indexer extends BaseRegionObserver {
 
   protected IndexWriter writer;
   protected IndexBuildManager builder;
+  private LockManager lockManager;
 
   /** Configuration key for the {@link IndexBuilder} to use */
   public static final String INDEX_BUILDER_CONF_KEY = "index.builder";
@@ -103,6 +129,17 @@ public class Indexer extends BaseRegionObserver {
   public static final String CHECK_VERSION_CONF_KEY = "com.saleforce.hbase.index.checkversion";
 
   private static final String INDEX_RECOVERY_FAILURE_POLICY_KEY = "org.apache.hadoop.hbase.index.recovery.failurepolicy";
+
+  private static final String INDEXER_INDEX_WRITE_SLOW_THRESHOLD_KEY = "phoenix.indexer.slow.post.batch.mutate.threshold";
+  private static final long INDEXER_INDEX_WRITE_SLOW_THRESHOLD_DEFAULT = 3_000;
+  private static final String INDEXER_INDEX_PREPARE_SLOW_THRESHOLD_KEY = "phoenix.indexer.slow.pre.batch.mutate.threshold";
+  private static final long INDEXER_INDEX_PREPARE_SLOW_THREHSOLD_DEFAULT = 3_000;
+  private static final String INDEXER_PRE_WAL_RESTORE_SLOW_THRESHOLD_KEY = "phoenix.indexer.slow.pre.wal.restore.threshold";
+  private static final long INDEXER_PRE_WAL_RESTORE_SLOW_THRESHOLD_DEFAULT = 3_000;
+  private static final String INDEXER_POST_OPEN_SLOW_THRESHOLD_KEY = "phoenix.indexer.slow.open.threshold";
+  private static final long INDEXER_POST_OPEN_SLOW_THRESHOLD_DEFAULT = 3_000;
+  private static final String INDEXER_PRE_INCREMENT_SLOW_THRESHOLD_KEY = "phoenix.indexer.slow.pre.increment";
+  private static final long INDEXER_PRE_INCREMENT_SLOW_THRESHOLD_DEFAULT = 3_000;
 
   /**
    * cache the failed updates to the various regions. Used for making the WAL recovery mechanisms
@@ -117,17 +154,27 @@ public class Indexer extends BaseRegionObserver {
    */
   private IndexWriter recoveryWriter;
 
+  private MetricsIndexerSource metricSource;
+
   private boolean stopped;
   private boolean disabled;
-
+  private long slowIndexWriteThreshold;
+  private long slowIndexPrepareThreshold;
+  private long slowPreWALRestoreThreshold;
+  private long slowPostOpenThreshold;
+  private long slowPreIncrementThreshold;
+  private int rowLockWaitDuration;
+  
   public static final String RecoveryFailurePolicyKeyForTesting = INDEX_RECOVERY_FAILURE_POLICY_KEY;
 
-    public static final int INDEXING_SUPPORTED_MAJOR_VERSION = VersionUtil
+  public static final int INDEXING_SUPPORTED_MAJOR_VERSION = VersionUtil
             .encodeMaxPatchVersion(0, 94);
-    public static final int INDEXING_SUPPORTED__MIN_MAJOR_VERSION = VersionUtil
+  public static final int INDEXING_SUPPORTED__MIN_MAJOR_VERSION = VersionUtil
             .encodeVersion("0.94.0");
-    private static final int INDEX_WAL_COMPRESSION_MINIMUM_SUPPORTED_VERSION = VersionUtil
+  private static final int INDEX_WAL_COMPRESSION_MINIMUM_SUPPORTED_VERSION = VersionUtil
             .encodeVersion("0.94.9");
+
+  private static final int DEFAULT_ROWLOCK_WAIT_DURATION = 30000;
 
   @Override
   public void start(CoprocessorEnvironment e) throws IOException {
@@ -145,14 +192,33 @@ public class Indexer extends BaseRegionObserver {
         }
     
         this.builder = new IndexBuildManager(env);
-
+        // Clone the config since it is shared
+        Configuration clonedConfig = PropertiesUtil.cloneConfig(e.getConfiguration());
+        /*
+         * Set the rpc controller factory so that the HTables used by IndexWriter would
+         * set the correct priorities on the remote RPC calls.
+         */
+        clonedConfig.setClass(RpcControllerFactory.CUSTOM_CONTROLLER_CONF_KEY,
+                InterRegionServerIndexRpcControllerFactory.class, RpcControllerFactory.class);
+        // lower the number of rpc retries.  We inherit config from HConnectionManager#setServerSideHConnectionRetries,
+        // which by default uses a multiplier of 10.  That is too many retries for our synchronous index writes
+        clonedConfig.setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER,
+            env.getConfiguration().getInt(INDEX_WRITER_RPC_RETRIES_NUMBER,
+                DEFAULT_INDEX_WRITER_RPC_RETRIES_NUMBER));
+        clonedConfig.setInt(HConstants.HBASE_CLIENT_PAUSE, env.getConfiguration()
+            .getInt(INDEX_WRITER_RPC_PAUSE, DEFAULT_INDEX_WRITER_RPC_PAUSE));
+        DelegateRegionCoprocessorEnvironment indexWriterEnv = new DelegateRegionCoprocessorEnvironment(clonedConfig, env);
         // setup the actual index writer
-        this.writer = new IndexWriter(env, serverName + "-index-writer");
-    
-        // setup the recovery writer that does retries on the failed edits
-        TrackingParallelWriterIndexCommitter recoveryCommmiter =
-            new TrackingParallelWriterIndexCommitter();
-    
+        this.writer = new IndexWriter(indexWriterEnv, serverName + "-index-writer");
+        
+        this.rowLockWaitDuration = clonedConfig.getInt("hbase.rowlock.wait.duration",
+                DEFAULT_ROWLOCK_WAIT_DURATION);
+        this.lockManager = new LockManager();
+
+        // Metrics impl for the Indexer -- avoiding unnecessary indirection for hadoop-1/2 compat
+        this.metricSource = MetricsIndexerSourceFactory.getInstance().create();
+        setSlowThresholds(e.getConfiguration());
+
         try {
           // get the specified failure policy. We only ever override it in tests, but we need to do it
           // here
@@ -161,10 +227,9 @@ public class Indexer extends BaseRegionObserver {
                 StoreFailuresInCachePolicy.class, IndexFailurePolicy.class);
           IndexFailurePolicy policy =
               policyClass.getConstructor(PerRegionIndexWriteCache.class).newInstance(failedIndexEdits);
-          LOG.debug("Setting up recovery writter with committer: " + recoveryCommmiter.getClass()
-              + " and failure policy: " + policy.getClass());
+          LOG.debug("Setting up recovery writter with failure policy: " + policy.getClass());
           recoveryWriter =
-              new IndexWriter(recoveryCommmiter, policy, env, serverName + "-recovery-writer");
+              new RecoveryIndexWriter(policy, indexWriterEnv, serverName + "-recovery-writer");
         } catch (Exception ex) {
           throw new IOException("Could not instantiate recovery failure policy!", ex);
         }
@@ -174,6 +239,30 @@ public class Indexer extends BaseRegionObserver {
           LOG.error("Must be too early a version of HBase. Disabled coprocessor ", ex);
       }
   }
+
+  /**
+   * Extracts the slow call threshold values from the configuration.
+   */
+  private void setSlowThresholds(Configuration c) {
+      slowIndexPrepareThreshold = c.getLong(INDEXER_INDEX_WRITE_SLOW_THRESHOLD_KEY,
+          INDEXER_INDEX_WRITE_SLOW_THRESHOLD_DEFAULT);
+      slowIndexWriteThreshold = c.getLong(INDEXER_INDEX_PREPARE_SLOW_THRESHOLD_KEY,
+          INDEXER_INDEX_PREPARE_SLOW_THREHSOLD_DEFAULT);
+      slowPreWALRestoreThreshold = c.getLong(INDEXER_PRE_WAL_RESTORE_SLOW_THRESHOLD_KEY,
+          INDEXER_PRE_WAL_RESTORE_SLOW_THRESHOLD_DEFAULT);
+      slowPostOpenThreshold = c.getLong(INDEXER_POST_OPEN_SLOW_THRESHOLD_KEY,
+          INDEXER_POST_OPEN_SLOW_THRESHOLD_DEFAULT);
+      slowPreIncrementThreshold = c.getLong(INDEXER_PRE_INCREMENT_SLOW_THRESHOLD_KEY,
+          INDEXER_PRE_INCREMENT_SLOW_THRESHOLD_DEFAULT);
+  }
+
+  private String getCallTooSlowMessage(String callName, long duration, long threshold) {
+      StringBuilder sb = new StringBuilder(64);
+      sb.append("(callTooSlow) ").append(callName).append(" duration=").append(duration);
+      sb.append("ms, threshold=").append(threshold).append("ms");
+      return sb.toString();
+  }
+
 
   @Override
   public void stop(CoprocessorEnvironment e) throws IOException {
@@ -191,6 +280,53 @@ public class Indexer extends BaseRegionObserver {
     this.recoveryWriter.stop(msg);
   }
 
+  /**
+   * We use an Increment to serialize the ON DUPLICATE KEY clause so that the HBase plumbing
+   * sets up the necessary locks and mvcc to allow an atomic update. The Increment is not a
+   * real increment, though, it's really more of a Put. We translate the Increment into a
+   * list of mutations, at most a single Put and Delete that are the changes upon executing
+   * the list of ON DUPLICATE KEY clauses for this row.
+   */
+  @Override
+  public Result preIncrementAfterRowLock(final ObserverContext<RegionCoprocessorEnvironment> e,
+          final Increment inc) throws IOException {
+      long start = EnvironmentEdgeManager.currentTimeMillis();
+      try {
+          List<Mutation> mutations = this.builder.executeAtomicOp(inc);
+          if (mutations == null) {
+              return null;
+          }
+
+          // Causes the Increment to be ignored as we're committing the mutations
+          // ourselves below.
+          e.bypass();
+          e.complete();
+          // ON DUPLICATE KEY IGNORE will return empty list if row already exists
+          // as no action is required in that case.
+          if (!mutations.isEmpty()) {
+              Region region = e.getEnvironment().getRegion();
+              // Otherwise, submit the mutations directly here
+                region.batchMutate(mutations.toArray(new Mutation[0]), HConstants.NO_NONCE,
+                    HConstants.NO_NONCE);
+          }
+          return Result.EMPTY_RESULT;
+      } catch (Throwable t) {
+          throw ServerUtil.createIOException(
+                  "Unable to process ON DUPLICATE IGNORE for " + 
+                  e.getEnvironment().getRegion().getRegionInfo().getTable().getNameAsString() + 
+                  "(" + Bytes.toStringBinary(inc.getRow()) + ")", t);
+      } finally {
+          long duration = EnvironmentEdgeManager.currentTimeMillis() - start;
+          if (duration >= slowIndexPrepareThreshold) {
+              if (LOG.isDebugEnabled()) {
+                  LOG.debug(getCallTooSlowMessage("preIncrementAfterRowLock", duration, slowPreIncrementThreshold));
+              }
+              metricSource.incrementSlowDuplicateKeyCheckCalls();
+          }
+          metricSource.updateDuplicateKeyCheckTime(duration);
+      }
+  }
+
   @Override
   public void preBatchMutate(ObserverContext<RegionCoprocessorEnvironment> c,
       MiniBatchOperationInProgress<Mutation> miniBatchOp) throws IOException {
@@ -198,15 +334,28 @@ public class Indexer extends BaseRegionObserver {
           super.preBatchMutate(c, miniBatchOp);
           return;
       }
+      long start = EnvironmentEdgeManager.currentTimeMillis();
       try {
           preBatchMutateWithExceptions(c, miniBatchOp);
           return;
       } catch (Throwable t) {
           rethrowIndexingException(t);
+      } finally {
+          long duration = EnvironmentEdgeManager.currentTimeMillis() - start;
+          if (duration >= slowIndexPrepareThreshold) {
+              if (LOG.isDebugEnabled()) {
+                  LOG.debug(getCallTooSlowMessage("preBatchMutate", duration, slowIndexPrepareThreshold));
+              }
+              metricSource.incrementNumSlowIndexPrepareCalls();
+          }
+          metricSource.updateIndexPrepareTime(duration);
       }
       throw new RuntimeException(
         "Somehow didn't return an index update but also didn't propagate the failure to the client!");
   }
+
+  private static final OperationStatus IGNORE = new OperationStatus(OperationStatusCode.SUCCESS);
+  private static final OperationStatus FAILURE = new OperationStatus(OperationStatusCode.FAILURE, "Unable to acquire row lock");
 
   public void preBatchMutateWithExceptions(ObserverContext<RegionCoprocessorEnvironment> c,
           MiniBatchOperationInProgress<Mutation> miniBatchOp) throws Throwable {
@@ -214,7 +363,7 @@ public class Indexer extends BaseRegionObserver {
       // first group all the updates for a single row into a single update to be processed
       Map<ImmutableBytesPtr, MultiMutation> mutations =
               new HashMap<ImmutableBytesPtr, MultiMutation>();
-
+          
       Durability defaultDurability = Durability.SYNC_WAL;
       if(c.getEnvironment().getRegion() != null) {
           defaultDurability = c.getEnvironment().getRegion().getTableDesc().getDurability();
@@ -224,33 +373,62 @@ public class Indexer extends BaseRegionObserver {
       Durability durability = Durability.SKIP_WAL;
       for (int i = 0; i < miniBatchOp.size(); i++) {
           Mutation m = miniBatchOp.getOperation(i);
+          if (this.builder.isAtomicOp(m)) {
+              miniBatchOp.setOperationStatus(i, IGNORE);
+              continue;
+          }
           // skip this mutation if we aren't enabling indexing
           // unfortunately, we really should ask if the raw mutation (rather than the combined mutation)
           // should be indexed, which means we need to expose another method on the builder. Such is the
           // way optimization go though.
-          if (!this.builder.isEnabled(m)) {
-              continue;
+          if (this.builder.isEnabled(m)) {
+              boolean success = false;
+              try {
+                  lockManager.lockRow(m.getRow(), rowLockWaitDuration);
+                  success = true;
+              } finally {
+                  if (!success) {
+                      // We're throwing here as a result of either a timeout while waiting
+                      // for the row lock or an interrupt. Either way, the lock on the
+                      // current row was unsuccessful and we won't be locking any more rows
+                      // since we're throwing. By setting the operation status to FAILURE
+                      // here, we prevent the attempt to unlock rows we've never locked when
+                      // postBatchMutateIndispensably is executed. We're very limited wrt
+                      // the state that can be shared between the batch mutate coprocessor
+                      // calls (see HBASE-18127).
+                      // Note that we shouldn't necessarily be throwing here, since we're
+                      // essentially failing the data write because we can't do the locking
+                      // necessary for performing consistent index maintenance. We'd ideally
+                      // want to go through the index failure policy to determine what action
+                      // to perform. We currently cannot ignore this lock failure as we lack
+                      // the ability to keep that state (PHOENIX-4055).
+                      for (int j = i; j < miniBatchOp.size(); j++) {
+                          miniBatchOp.setOperationStatus(j,FAILURE);
+                      }
+                  }
+              }
+              Durability effectiveDurablity = (m.getDurability() == Durability.USE_DEFAULT) ? 
+                      defaultDurability : m.getDurability();
+              if (effectiveDurablity.ordinal() > durability.ordinal()) {
+                  durability = effectiveDurablity;
+              }
+    
+              // TODO: remove this code as Phoenix prevents any duplicate
+              // rows in the batch mutation from the client side (PHOENIX-4054).
+              // Add the mutation to the batch set
+              ImmutableBytesPtr row = new ImmutableBytesPtr(m.getRow());
+              MultiMutation stored = mutations.get(row);
+              // we haven't seen this row before, so add it
+              if (stored == null) {
+                  stored = new MultiMutation(row);
+                  mutations.put(row, stored);
+              }
+              stored.addAll(m);
           }
-
-          Durability effectiveDurablity = (m.getDurability() == Durability.USE_DEFAULT) ? 
-                  defaultDurability : m.getDurability();
-          if (effectiveDurablity.ordinal() > durability.ordinal()) {
-              durability = effectiveDurablity;
-          }
-
-          // add the mutation to the batch set
-          ImmutableBytesPtr row = new ImmutableBytesPtr(m.getRow());
-          MultiMutation stored = mutations.get(row);
-          // we haven't seen this row before, so add it
-          if (stored == null) {
-              stored = new MultiMutation(row);
-              mutations.put(row, stored);
-          }
-          stored.addAll(m);
       }
-
+    
       // early exit if it turns out we don't have any edits
-      if (mutations.entrySet().size() == 0) {
+      if (mutations.isEmpty()) {
           return;
       }
 
@@ -261,6 +439,7 @@ public class Indexer extends BaseRegionObserver {
           edit = new WALEdit();
           miniBatchOp.setWalEdit(0, edit);
       }
+  
 
       // get the current span, or just use a null-span to avoid a bunch of if statements
       try (TraceScope scope = Trace.startSpan("Starting to build index updates")) {
@@ -268,14 +447,38 @@ public class Indexer extends BaseRegionObserver {
           if (current == null) {
               current = NullSpan.INSTANCE;
           }
+          long start = EnvironmentEdgeManager.currentTimeMillis();
 
           // get the index updates for all elements in this batch
           Collection<Pair<Mutation, byte[]>> indexUpdates =
                   this.builder.getIndexUpdate(miniBatchOp, mutations.values());
 
+
+          long duration = EnvironmentEdgeManager.currentTimeMillis() - start;
+          if (duration >= slowIndexPrepareThreshold) {
+              if (LOG.isDebugEnabled()) {
+                  LOG.debug(getCallTooSlowMessage("indexPrepare", duration, slowIndexPrepareThreshold));
+              }
+              metricSource.incrementNumSlowIndexPrepareCalls();
+          }
+          metricSource.updateIndexPrepareTime(duration);
           current.addTimelineAnnotation("Built index updates, doing preStep");
           TracingUtils.addAnnotation(current, "index update count", indexUpdates.size());
-
+          byte[] tableName = c.getEnvironment().getRegion().getTableDesc().getTableName().getName();
+          Iterator<Pair<Mutation, byte[]>> indexUpdatesItr = indexUpdates.iterator();
+          List<Mutation> localUpdates = new ArrayList<Mutation>(indexUpdates.size());
+          while(indexUpdatesItr.hasNext()) {
+              Pair<Mutation, byte[]> next = indexUpdatesItr.next();
+              if (Bytes.compareTo(next.getSecond(), tableName) == 0) {
+                  localUpdates.add(next.getFirst());
+                  indexUpdatesItr.remove();
+              }
+          }
+          if (!localUpdates.isEmpty()) {
+              miniBatchOp.addOperationsFromCP(0,
+                  localUpdates.toArray(new Mutation[localUpdates.size()]));
+          }
+          
           // write them, either to WAL or the index tables
           doPre(indexUpdates, edit, durability);
       }
@@ -297,7 +500,7 @@ public class Indexer extends BaseRegionObserver {
     // update right away
     if (durability == Durability.SKIP_WAL) {
       try {
-        this.writer.write(indexUpdates);
+        this.writer.write(indexUpdates, false);
         return false;
       } catch (Throwable e) {
         LOG.error("Failed to update index with entries:" + indexUpdates, e);
@@ -314,38 +517,38 @@ public class Indexer extends BaseRegionObserver {
   }
 
   @Override
-  public void postPut(ObserverContext<RegionCoprocessorEnvironment> e, Put put, WALEdit edit,
-      final Durability durability) throws IOException {
+  public void postBatchMutateIndispensably(ObserverContext<RegionCoprocessorEnvironment> c,
+      MiniBatchOperationInProgress<Mutation> miniBatchOp, final boolean success) throws IOException {
       if (this.disabled) {
-      super.postPut(e, put, edit, durability);
+          super.postBatchMutateIndispensably(c, miniBatchOp, success);
           return;
-        }
-    doPost(edit, put, durability);
-  }
+      }
+      long start = EnvironmentEdgeManager.currentTimeMillis();
+      try {
+          for (int i = 0; i < miniBatchOp.size(); i++) {
+              OperationStatus status = miniBatchOp.getOperationStatus(i);
+              if (status != IGNORE && status != FAILURE) {
+                  lockManager.unlockRow(miniBatchOp.getOperation(i).getRow());
+              }
+          }
+          this.builder.batchCompleted(miniBatchOp);
 
-  @Override
-  public void postDelete(ObserverContext<RegionCoprocessorEnvironment> e, Delete delete,
-      WALEdit edit, final Durability durability) throws IOException {
-      if (this.disabled) {
-      super.postDelete(e, delete, edit, durability);
-          return;
-        }
-    doPost(edit, delete, durability);
-  }
-
-  @Override
-  public void postBatchMutate(ObserverContext<RegionCoprocessorEnvironment> c,
-      MiniBatchOperationInProgress<Mutation> miniBatchOp) throws IOException {
-      if (this.disabled) {
-          super.postBatchMutate(c, miniBatchOp);
-          return;
-        }
-    this.builder.batchCompleted(miniBatchOp);
-
-    //each batch operation, only the first one will have anything useful, so we can just grab that
-    Mutation mutation = miniBatchOp.getOperation(0);
-    WALEdit edit = miniBatchOp.getWalEdit(0);
-    doPost(edit, mutation, mutation.getDurability());
+          if (success) { // if miniBatchOp was successfully written, write index updates
+              //each batch operation, only the first one will have anything useful, so we can just grab that
+              Mutation mutation = miniBatchOp.getOperation(0);
+              WALEdit edit = miniBatchOp.getWalEdit(0);
+              doPost(edit, mutation, mutation.getDurability());
+          }
+       } finally {
+           long duration = EnvironmentEdgeManager.currentTimeMillis() - start;
+           if (duration >= slowIndexWriteThreshold) {
+               if (LOG.isDebugEnabled()) {
+                   LOG.debug(getCallTooSlowMessage("postBatchMutateIndispensably", duration, slowIndexWriteThreshold));
+               }
+               metricSource.incrementNumSlowIndexWriteCalls();
+           }
+           metricSource.updateIndexWriteTime(duration);
+       }
   }
 
   private void doPost(WALEdit edit, Mutation m, final Durability durability) throws IOException {
@@ -362,7 +565,7 @@ public class Indexer extends BaseRegionObserver {
   private void doPostWithExceptions(WALEdit edit, Mutation m, final Durability durability)
           throws Exception {
       //short circuit, if we don't need to do any work
-      if (durability == Durability.SKIP_WAL || !this.builder.isEnabled(m)) {
+      if (durability == Durability.SKIP_WAL || !this.builder.isEnabled(m) || edit == null) {
           // already did the index update in prePut, so we are done
           return;
       }
@@ -373,6 +576,7 @@ public class Indexer extends BaseRegionObserver {
           if (current == null) {
               current = NullSpan.INSTANCE;
           }
+          long start = EnvironmentEdgeManager.currentTimeMillis();
 
           // there is a little bit of excess here- we iterate all the non-indexed kvs for this check first
           // and then do it again later when getting out the index updates. This should be pretty minor
@@ -401,9 +605,8 @@ public class Indexer extends BaseRegionObserver {
               // already specified on each reference
               try {
                   current.addTimelineAnnotation("Actually doing index update for first time");
-                  writer.writeAndKillYourselfOnFailure(indexUpdates);
-              } finally {
-                  // With a custom kill policy, we may throw instead of kill the server.
+                  writer.writeAndKillYourselfOnFailure(indexUpdates, false);
+              } finally {                  // With a custom kill policy, we may throw instead of kill the server.
                   // Without doing this in a finally block (at least with the mini cluster),
                   // the region server never goes down.
 
@@ -412,6 +615,15 @@ public class Indexer extends BaseRegionObserver {
                   ikv.markBatchFinished();
               }
           }
+
+          long duration = EnvironmentEdgeManager.currentTimeMillis() - start;
+          if (duration >= slowIndexWriteThreshold) {
+              if (LOG.isDebugEnabled()) {
+                  LOG.debug(getCallTooSlowMessage("indexWrite", duration, slowIndexWriteThreshold));
+              }
+              metricSource.incrementNumSlowIndexWriteCalls();
+          }
+          metricSource.updateIndexWriteTime(duration);
       }
   }
 
@@ -436,7 +648,9 @@ public class Indexer extends BaseRegionObserver {
    * @return the mutations to apply to the index tables
    */
   private Collection<Pair<Mutation, byte[]>> extractIndexUpdate(WALEdit edit) {
-    Collection<Pair<Mutation, byte[]>> indexUpdates = new ArrayList<Pair<Mutation, byte[]>>();
+    // Avoid multiple internal array resizings. Initial size of 64, unless we have fewer cells in the edit
+    int initialSize = Math.min(edit.size(), 64);
+    Collection<Pair<Mutation, byte[]>> indexUpdates = new ArrayList<Pair<Mutation, byte[]>>(initialSize);
     for (Cell kv : edit.getCells()) {
       if (kv instanceof IndexedKeyValue) {
         IndexedKeyValue ikv = (IndexedKeyValue) kv;
@@ -454,20 +668,35 @@ public class Indexer extends BaseRegionObserver {
     if (this.disabled) {
         super.postOpen(c);
         return;
-      }
-    LOG.info("Found some outstanding index updates that didn't succeed during"
-        + " WAL replay - attempting to replay now.");
-    //if we have no pending edits to complete, then we are done
-    if (updates == null || updates.size() == 0) {
-      return;
     }
-    
-    // do the usual writer stuff, killing the server again, if we can't manage to make the index
-    // writes succeed again
+
+    long start = EnvironmentEdgeManager.currentTimeMillis();
     try {
-        writer.writeAndKillYourselfOnFailure(updates);
-    } catch (IOException e) {
-        LOG.error("Exception thrown instead of killing server during index writing", e);
+        //if we have no pending edits to complete, then we are done
+        if (updates == null || updates.size() == 0) {
+          return;
+        }
+
+        LOG.info("Found some outstanding index updates that didn't succeed during"
+                + " WAL replay - attempting to replay now.");
+
+        // do the usual writer stuff, killing the server again, if we can't manage to make the index
+        // writes succeed again
+        try {
+            writer.writeAndKillYourselfOnFailure(updates, true);
+        } catch (IOException e) {
+                LOG.error("During WAL replay of outstanding index updates, "
+                        + "Exception is thrown instead of killing server during index writing", e);
+        }
+    } finally {
+         long duration = EnvironmentEdgeManager.currentTimeMillis() - start;
+         if (duration >= slowPostOpenThreshold) {
+             if (LOG.isDebugEnabled()) {
+                 LOG.debug(getCallTooSlowMessage("postOpen", duration, slowPostOpenThreshold));
+             }
+             metricSource.incrementNumSlowPostOpenCalls();
+         }
+         metricSource.updatePostOpenTime(duration);
     }
   }
 
@@ -477,19 +706,32 @@ public class Indexer extends BaseRegionObserver {
       if (this.disabled) {
           super.preWALRestore(env, info, logKey, logEdit);
           return;
-        }
+      }
+
     // TODO check the regions in transition. If the server on which the region lives is this one,
     // then we should rety that write later in postOpen.
     // we might be able to get even smarter here and pre-split the edits that are server-local
     // into their own recovered.edits file. This then lets us do a straightforward recovery of each
     // region (and more efficiently as we aren't writing quite as hectically from this one place).
 
-    /*
-     * Basically, we let the index regions recover for a little while long before retrying in the
-     * hopes they come up before the primary table finishes.
-     */
-    Collection<Pair<Mutation, byte[]>> indexUpdates = extractIndexUpdate(logEdit);
-    recoveryWriter.write(indexUpdates);
+      long start = EnvironmentEdgeManager.currentTimeMillis();
+      try {
+          /*
+           * Basically, we let the index regions recover for a little while long before retrying in the
+           * hopes they come up before the primary table finishes.
+           */
+          Collection<Pair<Mutation, byte[]>> indexUpdates = extractIndexUpdate(logEdit);
+          recoveryWriter.writeAndKillYourselfOnFailure(indexUpdates, true);
+      } finally {
+          long duration = EnvironmentEdgeManager.currentTimeMillis() - start;
+          if (duration >= slowPreWALRestoreThreshold) {
+              if (LOG.isDebugEnabled()) {
+                  LOG.debug(getCallTooSlowMessage("preWALRestore", duration, slowPreWALRestoreThreshold));
+              }
+              metricSource.incrementNumSlowPreWALRestoreCalls();
+          }
+          metricSource.updatePreWALRestoreTime(duration);
+      }
   }
 
   /**
@@ -500,10 +742,20 @@ public class Indexer extends BaseRegionObserver {
    * for these rows as those points still existed. TODO: v2 of indexing
    */
   @Override
-  public InternalScanner preCompactScannerOpen(ObserverContext<RegionCoprocessorEnvironment> c,
-      Store store, List<? extends KeyValueScanner> scanners, ScanType scanType, long earliestPutTs,
-      InternalScanner s) throws IOException {
-    return super.preCompactScannerOpen(c, store, scanners, scanType, earliestPutTs, s);
+  public InternalScanner preCompactScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> c,
+          final Store store, final List<? extends KeyValueScanner> scanners, final ScanType scanType,
+          final long earliestPutTs, final InternalScanner s) throws IOException {
+      // Compaction and split upcalls run with the effective user context of the requesting user.
+      // This will lead to failure of cross cluster RPC if the effective user is not
+      // the login user. Switch to the login user context to ensure we have the expected
+      // security context.
+      // NOTE: Not necessary here at this time but leave in place to document this critical detail.
+      return User.runAsLoginUser(new PrivilegedExceptionAction<InternalScanner>() {
+          @Override
+          public InternalScanner run() throws Exception {
+              return Indexer.super.preCompactScannerOpen(c, store, scanners, scanType, earliestPutTs, s);
+          }
+      });
   }
 
   /**

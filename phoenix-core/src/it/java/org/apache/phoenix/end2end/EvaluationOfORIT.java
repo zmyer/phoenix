@@ -33,13 +33,13 @@ import org.apache.phoenix.util.PropertiesUtil;
 import org.junit.Test;
 
 
-public class EvaluationOfORIT extends BaseHBaseManagedTimeIT{
-		
+public class EvaluationOfORIT extends ParallelStatsDisabledIT{
+
     @Test
     public void testFalseOrFalse() throws SQLException {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
-        ResultSet rs = conn.createStatement().executeQuery("SELECT (FALSE OR FALSE) AS B FROM SYSTEM.CATALOG LIMIT 1");
+        ResultSet rs = conn.createStatement().executeQuery("SELECT (FALSE OR FALSE) AS B FROM \"SYSTEM\".\"CATALOG\" LIMIT 1");
         assertTrue(rs.next());
         assertFalse(rs.getBoolean(1));
         conn.close();
@@ -48,15 +48,15 @@ public class EvaluationOfORIT extends BaseHBaseManagedTimeIT{
 	@Test
 	public void testPKOrNotPKInOREvaluation() throws SQLException {
 	    Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-	    Connection conn = DriverManager.getConnection(getUrl(), props);	    
+	    Connection conn = DriverManager.getConnection(getUrl(), props);
+        String tableName = generateUniqueName();
 	    conn.setAutoCommit(false);
 	    
-            String create = "CREATE TABLE DIE ( ID INTEGER NOT NULL PRIMARY KEY,NAME VARCHAR(50))";
-            PreparedStatement createStmt = conn.prepareStatement(create);
-            createStmt.execute();
+            String create = "CREATE TABLE " + tableName + " ( ID INTEGER NOT NULL PRIMARY KEY,NAME VARCHAR(50))";
+            conn.createStatement().execute(create);
             PreparedStatement stmt = conn.prepareStatement(
                     "upsert into " +
-                    "DIE VALUES (?, ?)");
+                     tableName + " VALUES (?, ?)");
 
             stmt.setInt(1, 1);
             stmt.setString(2, "Tester1");
@@ -163,7 +163,7 @@ public class EvaluationOfORIT extends BaseHBaseManagedTimeIT{
             stmt.execute();		   
             conn.commit();
             
-            String select = "Select * from DIE where ID=6 or Name between 'Tester1' and 'Tester3'";
+            String select = "Select * from " + tableName + " where ID=6 or Name between 'Tester1' and 'Tester3'";
             ResultSet rs;
             rs = conn.createStatement().executeQuery(select);
             assertTrue(rs.next());

@@ -25,65 +25,54 @@ import static org.junit.Assert.assertTrue;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Map;
 import java.util.Properties;
 
-import org.apache.phoenix.end2end.BaseHBaseManagedTimeIT;
-import org.apache.phoenix.end2end.Shadower;
+import org.apache.phoenix.end2end.ParallelStatsDisabledIT;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.util.PropertiesUtil;
-import org.apache.phoenix.util.ReadOnlyProps;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.TestUtil;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
-import com.google.common.collect.Maps;
-
 @RunWith(Parameterized.class)
-public class RollbackIT extends BaseHBaseManagedTimeIT {
+public class RollbackIT extends ParallelStatsDisabledIT {
 	
 	private final boolean localIndex;
 	private final boolean mutable;
-	private final String tableName;
-    private final String indexName;
-    private final String fullTableName;
 
 	public RollbackIT(boolean localIndex, boolean mutable) {
 		this.localIndex = localIndex;
 		this.mutable = mutable;
-		this.tableName = TestUtil.DEFAULT_DATA_TABLE_NAME;
-		this.indexName = "IDX";
-		this.fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
 	}
 	
-	@BeforeClass
-    @Shadower(classBeingShadowed = BaseHBaseManagedTimeIT.class)
-    public static void doSetup() throws Exception {
-        Map<String,String> props = Maps.newHashMapWithExpectedSize(2);
+    private static Connection getConnection() throws SQLException {
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.put(QueryServices.DEFAULT_TABLE_ISTRANSACTIONAL_ATTRIB, Boolean.toString(true));
-        props.put(QueryServices.TRANSACTIONS_ENABLED, Boolean.toString(true));
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
+        Connection conn = DriverManager.getConnection(getUrl(), props);
+        return conn;
     }
-	
-	@Parameters(name="localIndex = {0} , mutable = {1}")
+    
+	@Parameters(name="RollbackIT_localIndex={0},mutable={1}") // name is used by failsafe as file name in reports
     public static Collection<Boolean[]> data() {
         return Arrays.asList(new Boolean[][] {     
                  { false, false }, { false, true },
-                 { true, false }, { true, true }  
+                 { true, false }, { true, true } 
            });
     }
     
     @Test
     public void testRollbackOfUncommittedKeyValueIndexInsert() throws Exception {
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IDX_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+        Connection conn = getConnection();
         conn.setAutoCommit(false);
         try {
             Statement stmt = conn.createStatement();
@@ -124,9 +113,11 @@ public class RollbackIT extends BaseHBaseManagedTimeIT {
     
     @Test
     public void testRollbackOfUncommittedRowKeyIndexInsert() throws Exception {
-        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        Connection conn = DriverManager.getConnection(getUrl(), props);
+        Connection conn = getConnection();
         conn.setAutoCommit(false);
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IDX_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
         try {
             Statement stmt = conn.createStatement();
             stmt.execute("CREATE TABLE " + fullTableName + "(k VARCHAR, v1 VARCHAR, v2 VARCHAR, CONSTRAINT pk PRIMARY KEY (v1, v2))"+(!mutable? " IMMUTABLE_ROWS=true" : ""));

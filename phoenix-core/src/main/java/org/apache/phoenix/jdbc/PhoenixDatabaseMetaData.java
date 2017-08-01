@@ -30,6 +30,7 @@ import java.util.List;
 
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.compile.ColumnProjector;
@@ -78,7 +79,6 @@ import com.google.common.collect.Lists;
  * 
  */
 public class PhoenixDatabaseMetaData implements DatabaseMetaData {
-    public static final int INDEX_NAME_INDEX = 4; // Shared with FAMILY_NAME_INDEX
     public static final int FAMILY_NAME_INDEX = 4;
     public static final int COLUMN_NAME_INDEX = 3;
     public static final int TABLE_NAME_INDEX = 2;
@@ -92,12 +92,14 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     public static final byte[] SYSTEM_CATALOG_SCHEMA_BYTES = QueryConstants.SYSTEM_SCHEMA_NAME_BYTES;
     public static final String SYSTEM_SCHEMA_NAME = QueryConstants.SYSTEM_SCHEMA_NAME;
     public static final byte[] SYSTEM_SCHEMA_NAME_BYTES = QueryConstants.SYSTEM_SCHEMA_NAME_BYTES;
+    public static final TableName SYSTEM_SCHEMA_HBASE_TABLE_NAME = TableName.valueOf(SYSTEM_SCHEMA_NAME);
 
     public static final String SYSTEM_CATALOG_TABLE = "CATALOG";
     public static final byte[] SYSTEM_CATALOG_TABLE_BYTES = Bytes.toBytes(SYSTEM_CATALOG_TABLE);
     public static final String SYSTEM_CATALOG = SYSTEM_CATALOG_SCHEMA + ".\"" + SYSTEM_CATALOG_TABLE + "\"";
     public static final String SYSTEM_CATALOG_NAME = SchemaUtil.getTableName(SYSTEM_CATALOG_SCHEMA,
             SYSTEM_CATALOG_TABLE);
+    public static final TableName SYSTEM_CATALOG_HBASE_TABLE_NAME = TableName.valueOf(SYSTEM_CATALOG_NAME);
     public static final byte[] SYSTEM_CATALOG_NAME_BYTES = Bytes.toBytes(SYSTEM_CATALOG_NAME);
     public static final String SYSTEM_STATS_TABLE = "STATS";
     public static final String SYSTEM_STATS_NAME = SchemaUtil.getTableName(SYSTEM_CATALOG_SCHEMA, SYSTEM_STATS_TABLE);
@@ -105,6 +107,7 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     public static final byte[] IS_NAMESPACE_MAPPED_BYTES = Bytes.toBytes(IS_NAMESPACE_MAPPED);
     public static final byte[] SYSTEM_STATS_NAME_BYTES = Bytes.toBytes(SYSTEM_STATS_NAME);
     public static final byte[] SYSTEM_STATS_TABLE_BYTES = Bytes.toBytes(SYSTEM_STATS_TABLE);
+    public static final TableName SYSTEM_STATS_HBASE_TABLE_NAME = TableName.valueOf(SYSTEM_STATS_NAME);
     public static final String SYSTEM_CATALOG_ALIAS = "\"SYSTEM.TABLE\"";
 
     public static final byte[] SYSTEM_SEQUENCE_FAMILY_BYTES = QueryConstants.DEFAULT_COLUMN_FAMILY_BYTES;
@@ -115,6 +118,7 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     public static final String SYSTEM_SEQUENCE = SYSTEM_CATALOG_SCHEMA + ".\"" + SYSTEM_SEQUENCE_TABLE + "\"";
     public static final String SYSTEM_SEQUENCE_NAME = SchemaUtil.getTableName(SYSTEM_SEQUENCE_SCHEMA, SYSTEM_SEQUENCE_TABLE);
     public static final byte[] SYSTEM_SEQUENCE_NAME_BYTES = Bytes.toBytes(SYSTEM_SEQUENCE_NAME);
+    public static final TableName SYSTEM_SEQUENCE_HBASE_TABLE_NAME = TableName.valueOf(SYSTEM_SEQUENCE_NAME);
     
     public static final String TABLE_NAME = "TABLE_NAME";
     public static final byte[] TABLE_NAME_BYTES = Bytes.toBytes(TABLE_NAME);
@@ -124,6 +128,7 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     public static final byte[] PHYSICAL_NAME_BYTES = Bytes.toBytes(PHYSICAL_NAME);
 
     public static final String COLUMN_FAMILY = "COLUMN_FAMILY";
+    public static final byte[] COLUMN_FAMILY_BYTES = Bytes.toBytes(COLUMN_FAMILY);
     public static final String TABLE_CAT = "TABLE_CAT";
     public static final String TABLE_CATALOG = "TABLE_CATALOG";
     public static final String TABLE_SCHEM = "TABLE_SCHEM";
@@ -205,7 +210,7 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     public static final byte[] BASE_COLUMN_COUNT_BYTES = Bytes.toBytes(BASE_COLUMN_COUNT);
     public static final String IS_ROW_TIMESTAMP = "IS_ROW_TIMESTAMP";
     public static final byte[] IS_ROW_TIMESTAMP_BYTES = Bytes.toBytes(IS_ROW_TIMESTAMP);
-
+    
     public static final String TABLE_FAMILY = QueryConstants.DEFAULT_COLUMN_FAMILY;
     public static final byte[] TABLE_FAMILY_BYTES = QueryConstants.DEFAULT_COLUMN_FAMILY_BYTES;
 
@@ -213,6 +218,7 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     public static final String SYSTEM_FUNCTION_TABLE = "FUNCTION";
     public static final String SYSTEM_FUNCTION_NAME = SchemaUtil.getTableName(SYSTEM_CATALOG_SCHEMA, SYSTEM_FUNCTION_TABLE);
     public static final byte[] SYSTEM_FUNCTION_NAME_BYTES = Bytes.toBytes(SYSTEM_FUNCTION_NAME);
+    public static final TableName SYSTEM_FUNCTION_HBASE_TABLE_NAME = TableName.valueOf(SYSTEM_FUNCTION_NAME);
 
     public static final String FUNCTION_NAME = "FUNCTION_NAME";
     public static final byte[] FUNCTION_NAME_BYTES = Bytes.toBytes(FUNCTION_NAME);
@@ -279,6 +285,8 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     public static final String LAST_STATS_UPDATE_TIME = "LAST_STATS_UPDATE_TIME";
     public static final byte[] LAST_STATS_UPDATE_TIME_BYTES = Bytes.toBytes(LAST_STATS_UPDATE_TIME);
     public static final String GUIDE_POST_KEY = "GUIDE_POST_KEY";
+    public static final String ASYNC_REBUILD_TIMESTAMP = "ASYNC_REBUILD_TIMESTAMP";
+    public static final byte[] ASYNC_REBUILD_TIMESTAMP_BYTES = Bytes.toBytes(ASYNC_REBUILD_TIMESTAMP);
 
     public static final String PARENT_TENANT_ID = "PARENT_TENANT_ID";
     public static final byte[] PARENT_TENANT_ID_BYTES = Bytes.toBytes(PARENT_TENANT_ID);
@@ -292,13 +300,27 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     public static final String UPDATE_CACHE_FREQUENCY = "UPDATE_CACHE_FREQUENCY";
     public static final byte[] UPDATE_CACHE_FREQUENCY_BYTES = Bytes.toBytes(UPDATE_CACHE_FREQUENCY);
 
+    public static final String AUTO_PARTITION_SEQ = "AUTO_PARTITION_SEQ";
+    public static final byte[] AUTO_PARTITION_SEQ_BYTES = Bytes.toBytes(AUTO_PARTITION_SEQ);
+    
+    public static final String APPEND_ONLY_SCHEMA = "APPEND_ONLY_SCHEMA";
+    public static final byte[] APPEND_ONLY_SCHEMA_BYTES = Bytes.toBytes(APPEND_ONLY_SCHEMA);
+    
     public static final String ASYNC_CREATED_DATE = "ASYNC_CREATED_DATE";
+    public static final String SEQUENCE_TABLE_TYPE = SYSTEM_SEQUENCE_TABLE;
 
+    public static final String SYSTEM_MUTEX_TABLE_NAME = "MUTEX";
+    public static final String SYSTEM_MUTEX_NAME = SchemaUtil.getTableName(QueryConstants.SYSTEM_SCHEMA_NAME, SYSTEM_MUTEX_TABLE_NAME);
+    public static final TableName SYSTEM_MUTEX_HBASE_TABLE_NAME = TableName.valueOf(SYSTEM_MUTEX_NAME);
+    public static final byte[] SYSTEM_MUTEX_NAME_BYTES = Bytes.toBytes(SYSTEM_MUTEX_NAME);
+    public static final byte[] SYSTEM_MUTEX_FAMILY_NAME_BYTES = TABLE_FAMILY_BYTES;
+    
     private final PhoenixConnection connection;
     private final ResultSet emptyResultSet;
     public static final int MAX_LOCAL_SI_VERSION_DISALLOW = VersionUtil.encodeVersion("0", "98", "8");
     public static final int MIN_LOCAL_SI_VERSION_DISALLOW = VersionUtil.encodeVersion("0", "98", "6");
     public static final int MIN_RENEW_LEASE_VERSION = VersionUtil.encodeVersion("1", "1", "3");
+    public static final int MIN_NAMESPACE_MAPPED_PHOENIX_VERSION = VersionUtil.encodeVersion("4", "8", "0");
     
     // Version below which we should turn off essential column family.
     public static final int ESSENTIAL_FAMILY_VERSION_THRESHOLD = VersionUtil.encodeVersion("0", "94", "7");
@@ -307,6 +329,17 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
     /** Version below which we fall back on the generic KeyValueBuilder */
     public static final int CLIENT_KEY_VALUE_BUILDER_THRESHOLD = VersionUtil.encodeVersion("0", "94", "14");
     
+    public static final String IMMUTABLE_STORAGE_SCHEME = "IMMUTABLE_STORAGE_SCHEME";
+    public static final byte[] STORAGE_SCHEME_BYTES = Bytes.toBytes(IMMUTABLE_STORAGE_SCHEME);
+    public static final String ENCODING_SCHEME = "ENCODING_SCHEME";
+    public static final byte[] ENCODING_SCHEME_BYTES = Bytes.toBytes(ENCODING_SCHEME);
+    public static final String COLUMN_QUALIFIER = "COLUMN_QUALIFIER";
+    public static final byte[] COLUMN_QUALIFIER_BYTES = Bytes.toBytes(COLUMN_QUALIFIER);
+    public static final String COLUMN_QUALIFIER_COUNTER = "QUALIFIER_COUNTER";
+    public static final byte[] COLUMN_QUALIFIER_COUNTER_BYTES = Bytes.toBytes(COLUMN_QUALIFIER_COUNTER);
+    public static final String USE_STATS_FOR_PARALLELIZATION = "USE_STATS_FOR_PARALLELIZATION";
+    public static final byte[] USE_STATS_FOR_PARALLELIZATION_BYTES = Bytes.toBytes(USE_STATS_FOR_PARALLELIZATION);
+
     PhoenixDatabaseMetaData(PhoenixConnection connection) throws SQLException {
         this.emptyResultSet = new PhoenixResultSet(ResultIterator.EMPTY_ITERATOR, RowProjector.EMPTY_PROJECTOR, new StatementContext(new PhoenixStatement(connection), false));
         this.connection = connection;
@@ -490,6 +523,8 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
         if (colPattern == null || colPattern.length() == 0) {
             appendConjunction(where);
             where.append(COLUMN_NAME + " is not null" );
+            appendConjunction(where);
+            where.append(LINK_TYPE + " is null" );
         }
         boolean isTenantSpecificConnection = connection.getTenantId() != null;
         if (isTenantSpecificConnection) {
@@ -507,7 +542,7 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
                 public PhoenixStatement newStatement(PhoenixConnection connection) {
                     return new PhoenixStatement(connection) {
                         @Override
-                        protected PhoenixResultSet newResultSet(ResultIterator iterator, RowProjector projector,
+                        public PhoenixResultSet newResultSet(ResultIterator iterator, RowProjector projector,
                                 StatementContext context) throws SQLException {
                             return new PhoenixResultSet(new TenantColumnFilteringIterator(iterator, projector),
                                     projector, context);
@@ -580,9 +615,8 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
                 newCells.addAll(cells);
                 newCells.add(kv);
                 Collections.sort(newCells, KeyValue.COMPARATOR);
-                resultTuple.setResult(Result.create(newCells));
+                tuple = new ResultTuple(Result.create(newCells));
             }
-
             return tuple;
         }
 
@@ -908,7 +942,7 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public ResultSet getSchemas() throws SQLException {
-        return getSchemas(null, null);
+        return getSchemas("", null);
     }
 
     @Override
@@ -918,10 +952,16 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
                 TENANT_ID + " " + TABLE_CATALOG +
                 " from " + SYSTEM_CATALOG + " " + SYSTEM_CATALOG_ALIAS +
                 " where " + COLUMN_NAME + " is null");
+        addTenantIdFilter(buf, catalog);
         if (schemaPattern != null) {
             buf.append(" and " + TABLE_SCHEM + " like '" + StringUtil.escapeStringConstant(schemaPattern) + "'");
         }
-        buf.append(" and " + TABLE_NAME + " = '" + MetaDataClient.EMPTY_TABLE + "'");
+        if (SchemaUtil.isNamespaceMappingEnabled(null, connection.getQueryServices().getProps())) {
+            buf.append(" and " + TABLE_NAME + " = '" + MetaDataClient.EMPTY_TABLE + "'");
+        }
+
+        // TODO: we should union this with SYSTEM.SEQUENCE too, but we only have support for
+        // UNION ALL and we really need UNION so that it dedups.
         Statement stmt = connection.createStatement();
         return stmt.executeQuery(buf.toString());
     }
@@ -1003,66 +1043,134 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
             ), 0, true);
     private static final Collection<Tuple> TABLE_TYPE_TUPLES = Lists.newArrayListWithExpectedSize(PTableType.values().length);
     static {
-        for (PTableType tableType : PTableType.values()) {
-            TABLE_TYPE_TUPLES.add(new SingleKeyValueTuple(KeyValueUtil.newKeyValue(tableType.getValue().getBytes(), TABLE_FAMILY_BYTES, TABLE_TYPE_BYTES, MetaDataProtocol.MIN_TABLE_TIMESTAMP, ByteUtil.EMPTY_BYTE_ARRAY)));
+        List<byte[]> tableTypes = Lists.<byte[]>newArrayList(
+                PTableType.INDEX.getValue().getBytes(),
+                Bytes.toBytes(SEQUENCE_TABLE_TYPE), 
+                PTableType.SYSTEM.getValue().getBytes(),
+                PTableType.TABLE.getValue().getBytes(),
+                PTableType.VIEW.getValue().getBytes());
+        for (byte[] tableType : tableTypes) {
+            TABLE_TYPE_TUPLES.add(new SingleKeyValueTuple(KeyValueUtil.newKeyValue(tableType, TABLE_FAMILY_BYTES, TABLE_TYPE_BYTES, MetaDataProtocol.MIN_TABLE_TIMESTAMP, ByteUtil.EMPTY_BYTE_ARRAY)));
         }
     }
+    
+    /**
+     * Supported table types include: INDEX, SEQUENCE, SYSTEM TABLE, TABLE, VIEW
+     */
     @Override
     public ResultSet getTableTypes() throws SQLException {
         return new PhoenixResultSet(new MaterializedResultIterator(TABLE_TYPE_TUPLES), TABLE_TYPE_ROW_PROJECTOR, new StatementContext(new PhoenixStatement(connection), false));
     }
 
-    /**
-     * We support either:
-     * 1) A non null tableNamePattern to find an exactly match with a table name, in which case either a single
-     *    row would be returned in the ResultSet (if found) or no rows would be returned (if not
-     *    found).
-     * 2) A null tableNamePattern, in which case the ResultSet returned would have one row per
-     *    table.
-     * Note that catalog and schemaPattern must be null or an empty string and types must be null
-     * or "TABLE".  Otherwise, no rows will be returned.
-     */
     @Override
     public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types)
             throws SQLException {
-        StringBuilder buf = new StringBuilder("select \n" +
-                TENANT_ID + " " + TABLE_CAT + "," + // tenant_id is the catalog
-                TABLE_SCHEM + "," +
-                TABLE_NAME + " ," +
-                SQLTableTypeFunction.NAME + "(" + TABLE_TYPE + ") AS " + TABLE_TYPE + "," +
-                REMARKS + " ," +
-                TYPE_NAME + "," +
-                SELF_REFERENCING_COL_NAME + "," +
-                REF_GENERATION + "," +
-                IndexStateNameFunction.NAME + "(" + INDEX_STATE + ") AS " + INDEX_STATE + "," +
-                IMMUTABLE_ROWS + "," +
-                SALT_BUCKETS + "," +
-                MULTI_TENANT + "," +
-                VIEW_STATEMENT + "," +
-                SQLViewTypeFunction.NAME + "(" + VIEW_TYPE + ") AS " + VIEW_TYPE + "," +
-                SQLIndexTypeFunction.NAME + "(" + INDEX_TYPE + ") AS " + INDEX_TYPE +
-                " from " + SYSTEM_CATALOG + " " + SYSTEM_CATALOG_ALIAS +
-                " where " + COLUMN_NAME + " is null" +
-                " and " + COLUMN_FAMILY + " is null" +
-                " and " + TABLE_NAME + " != '" + MetaDataClient.EMPTY_TABLE + "'");
-        addTenantIdFilter(buf, catalog);
-        if (schemaPattern != null) {
-            buf.append(" and " + TABLE_SCHEM + (schemaPattern.length() == 0 ? " is null" : " like '" + StringUtil.escapeStringConstant(schemaPattern) + "'" ));
-        }
-        if (tableNamePattern != null) {
-            buf.append(" and " + TABLE_NAME + " like '" + StringUtil.escapeStringConstant(tableNamePattern) + "'" );
-        }
-        if (types != null && types.length > 0) {
-            buf.append(" and " + TABLE_TYPE + " IN (");
-            for (String type : types) {
-                buf.append('\'');
-                buf.append(PTableType.fromValue(type).getSerializedValue());
-                buf.append('\'');
-                buf.append(',');
+        boolean isSequence = false;
+        boolean hasTableTypes = types != null && types.length > 0;
+        StringBuilder typeClauseBuf = new StringBuilder();
+        if (hasTableTypes) {
+            List<String> tableTypes = Lists.newArrayList(types);
+            isSequence = tableTypes.remove(SEQUENCE_TABLE_TYPE);
+            StringBuilder typeBuf = new StringBuilder();
+            for (String type : tableTypes) {
+                try {
+                    PTableType tableType = PTableType.fromValue(type);
+                    typeBuf.append('\'');
+                    typeBuf.append(tableType.getSerializedValue());
+                    typeBuf.append('\'');
+                    typeBuf.append(',');
+                } catch (IllegalArgumentException e) {
+                    // Ignore and continue
+                }
             }
-            buf.setCharAt(buf.length()-1, ')');
+            if (typeBuf.length() > 0) {
+                typeClauseBuf.append(" and " + TABLE_TYPE + " IN (");
+                typeClauseBuf.append(typeBuf);
+                typeClauseBuf.setCharAt(typeClauseBuf.length()-1, ')');
+            }
         }
-        buf.append(" order by " + SYSTEM_CATALOG_ALIAS + "." + TABLE_TYPE + "," +TENANT_ID + "," + TABLE_SCHEM + "," + TABLE_NAME);
+        StringBuilder buf = new StringBuilder("select \n");
+        // If there were table types specified and they were all filtered out
+        // and we're not querying for sequences, return an empty result set.
+        if (hasTableTypes && typeClauseBuf.length() == 0 && !isSequence) {
+            return this.emptyResultSet;
+        }
+        if (typeClauseBuf.length() > 0 || !isSequence) {
+            buf.append(
+                    TENANT_ID + " " + TABLE_CAT + "," + // tenant_id is the catalog
+                    TABLE_SCHEM + "," +
+                    TABLE_NAME + " ," +
+                    SQLTableTypeFunction.NAME + "(" + TABLE_TYPE + ") AS " + TABLE_TYPE + "," +
+                    REMARKS + " ," +
+                    TYPE_NAME + "," +
+                    SELF_REFERENCING_COL_NAME + "," +
+                    REF_GENERATION + "," +
+                    IndexStateNameFunction.NAME + "(" + INDEX_STATE + ") AS " + INDEX_STATE + "," +
+                     IMMUTABLE_ROWS + "," +
+                    SALT_BUCKETS + "," +
+                    MULTI_TENANT + "," +
+                    VIEW_STATEMENT + "," +
+                    SQLViewTypeFunction.NAME + "(" + VIEW_TYPE + ") AS " + VIEW_TYPE + "," +
+                    SQLIndexTypeFunction.NAME + "(" + INDEX_TYPE + ") AS " + INDEX_TYPE + "," +
+                    TRANSACTIONAL + "," +
+                    IS_NAMESPACE_MAPPED + "," +
+                    GUIDE_POSTS_WIDTH +
+                    " from " + SYSTEM_CATALOG + " " + SYSTEM_CATALOG_ALIAS +
+                    " where " + COLUMN_NAME + " is null" +
+                    " and " + COLUMN_FAMILY + " is null" +
+                    " and " + TABLE_NAME + " != '" + MetaDataClient.EMPTY_TABLE + "'");
+            addTenantIdFilter(buf, catalog);
+            if (schemaPattern != null) {
+                buf.append(" and " + TABLE_SCHEM + (schemaPattern.length() == 0 ? " is null" : " like '" + StringUtil.escapeStringConstant(schemaPattern) + "'" ));
+            }
+            if (tableNamePattern != null) {
+                buf.append(" and " + TABLE_NAME + " like '" + StringUtil.escapeStringConstant(tableNamePattern) + "'" );
+            }
+            if (typeClauseBuf.length() > 0) {
+                buf.append(typeClauseBuf);
+            }
+        }
+        if (isSequence) {
+            // Union the SYSTEM.CATALOG entries with the SYSTEM.SEQUENCE entries
+            if (typeClauseBuf.length() > 0) {
+                buf.append(" UNION ALL\n");
+                buf.append(" select\n");
+            }
+            buf.append(
+                    TENANT_ID + " " + TABLE_CAT + "," + // tenant_id is the catalog
+                    SEQUENCE_SCHEMA + " " + TABLE_SCHEM + "," +
+                    SEQUENCE_NAME + " " + TABLE_NAME + " ," +
+                    "'" + SEQUENCE_TABLE_TYPE + "' " + TABLE_TYPE + "," +
+                    "'' " + REMARKS + " ," +
+                    "'' " + TYPE_NAME + "," +
+                    "'' " + SELF_REFERENCING_COL_NAME + "," +
+                    "'' " + REF_GENERATION + "," +
+                    "CAST(null AS CHAR(1)) " + INDEX_STATE + "," +
+                    "CAST(null AS BOOLEAN) " + IMMUTABLE_ROWS + "," +
+                    "CAST(null AS INTEGER) " + SALT_BUCKETS + "," +
+                    "CAST(null AS BOOLEAN) " + MULTI_TENANT + "," +
+                    "'' " + VIEW_STATEMENT + "," +
+                    "'' " + VIEW_TYPE + "," +
+                    "'' " + INDEX_TYPE + "," +
+                    "CAST(null AS BOOLEAN) " + TRANSACTIONAL + "," +
+                    "CAST(null AS BOOLEAN) " + IS_NAMESPACE_MAPPED + "," +
+                    "CAST(null AS BIGINT) " + GUIDE_POSTS_WIDTH + "\n");
+            buf.append(
+                    " from " + SYSTEM_SEQUENCE + "\n");
+            StringBuilder whereClause = new StringBuilder();
+            addTenantIdFilter(whereClause, catalog);
+            if (schemaPattern != null) {
+                whereClause.append(" and " + SEQUENCE_SCHEMA + (schemaPattern.length() == 0 ? " is null" : " like '" + StringUtil.escapeStringConstant(schemaPattern) + "'\n" ));
+            }
+            if (tableNamePattern != null) {
+                whereClause.append(" and " + SEQUENCE_NAME + " like '" + StringUtil.escapeStringConstant(tableNamePattern) + "'\n" );
+            }
+            if (whereClause.length() > 0) {
+                buf.append(" where\n");
+                buf.append(whereClause);
+            }
+        }
+        buf.append(" order by 4, 1, 2, 3\n");
         Statement stmt = connection.createStatement();
         return stmt.executeQuery(buf.toString());
     }
@@ -1454,7 +1562,7 @@ public class PhoenixDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsSchemasInDataManipulation() throws SQLException {
-        return false;
+        return true;
     }
 
     @Override

@@ -35,13 +35,13 @@ import org.apache.phoenix.schema.types.PUnsignedLong;
 import org.junit.Test;
 
 
-public class DecodeFunctionIT extends BaseHBaseManagedTimeTableReuseIT {
+public class DecodeFunctionIT extends ParallelStatsDisabledIT {
 
 	@Test
 	public void shouldPass() throws Exception {
 		Connection conn = DriverManager.getConnection(getUrl());
 
-		String testTable = generateRandomString();
+		String testTable = generateUniqueName();
 		String ddl = "CREATE TABLE " + testTable
 				+ " ( some_column BINARY(12) NOT NULL CONSTRAINT PK PRIMARY KEY (some_column))";
 
@@ -64,7 +64,7 @@ public class DecodeFunctionIT extends BaseHBaseManagedTimeTableReuseIT {
 	public void upperCaseHexEncoding() throws Exception {
 		Connection conn = DriverManager.getConnection(getUrl());
 
-		String testTable = generateRandomString();
+		String testTable = generateUniqueName();
 		String ddl = "CREATE TABLE " + testTable
 				+ " ( some_column BINARY(12) NOT NULL CONSTRAINT PK PRIMARY KEY (some_column))";
 
@@ -86,7 +86,7 @@ public class DecodeFunctionIT extends BaseHBaseManagedTimeTableReuseIT {
 	@Test
 	public void invalidCharacters() throws Exception {
 		Connection conn = DriverManager.getConnection(getUrl());
-		String testTable = generateRandomString();
+		String testTable = generateUniqueName();
 		String ddl = "CREATE TABLE " + testTable
 				+ " ( some_column BINARY(12) NOT NULL CONSTRAINT PK PRIMARY KEY (some_column))";
 
@@ -104,7 +104,7 @@ public class DecodeFunctionIT extends BaseHBaseManagedTimeTableReuseIT {
 	@Test
 	public void invalidLength() throws Exception {
 		Connection conn = DriverManager.getConnection(getUrl());
-		String testTable = generateRandomString();
+		String testTable = generateUniqueName();
 		String ddl = "CREATE TABLE " + testTable
 				+ " ( some_column BINARY(12) NOT NULL CONSTRAINT PK PRIMARY KEY (some_column))";
 
@@ -122,7 +122,7 @@ public class DecodeFunctionIT extends BaseHBaseManagedTimeTableReuseIT {
 	@Test
 	public void nullEncoding() throws Exception {
 		Connection conn = DriverManager.getConnection(getUrl());
-		String testTable = generateRandomString();
+		String testTable = generateUniqueName();
 		String ddl = "CREATE TABLE " + testTable
 				+ " ( some_column BINARY(12) NOT NULL CONSTRAINT PK PRIMARY KEY (some_column))";
 
@@ -136,7 +136,7 @@ public class DecodeFunctionIT extends BaseHBaseManagedTimeTableReuseIT {
 	@Test
 	public void invalidEncoding() throws Exception {
 		Connection conn = DriverManager.getConnection(getUrl());
-		String testTable = generateRandomString();
+		String testTable = generateUniqueName();
 		String ddl = "CREATE TABLE " + testTable
 				+ " ( some_column BINARY(12) NOT NULL CONSTRAINT PK PRIMARY KEY (some_column))";
 

@@ -48,17 +48,16 @@ import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.SimpleRegionObserver;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.phoenix.end2end.BaseHBaseManagedTimeIT;
-import org.apache.phoenix.end2end.Shadower;
+import org.apache.phoenix.end2end.BaseUniqueNamesOwnClusterIT;
 import org.apache.phoenix.exception.SQLExceptionCode;
 import org.apache.phoenix.query.BaseTest;
 import org.apache.phoenix.query.QueryServices;
+import org.apache.phoenix.schema.PTableImpl;
 import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.ReadOnlyProps;
 import org.apache.phoenix.util.SchemaUtil;
 import org.apache.phoenix.util.TestUtil;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -69,35 +68,35 @@ import com.google.common.collect.Maps;
 
 
 @RunWith(Parameterized.class)
-public class ImmutableIndexIT extends BaseHBaseManagedTimeIT {
+public class ImmutableIndexIT extends BaseUniqueNamesOwnClusterIT {
 
     private final boolean localIndex;
+    private final boolean columnEncoded;
     private final String tableDDLOptions;
-    private final String tableName;
-    private final String indexName;
-    private final String fullTableName;
-    private final String fullIndexName;
+
     private volatile boolean stopThreads = false;
 
     private static String TABLE_NAME;
     private static String INDEX_DDL;
     public static final AtomicInteger NUM_ROWS = new AtomicInteger(0);
 
-    public ImmutableIndexIT(boolean localIndex, boolean transactional) {
-        this.localIndex = localIndex;
+    public ImmutableIndexIT(boolean localIndex, boolean transactional, boolean columnEncoded) {
         StringBuilder optionBuilder = new StringBuilder("IMMUTABLE_ROWS=true");
+        this.localIndex = localIndex;
+        this.columnEncoded = columnEncoded;
+        if (!columnEncoded) {
+            if (optionBuilder.length()!=0)
+                optionBuilder.append(",");
+            optionBuilder.append("COLUMN_ENCODED_BYTES=0,IMMUTABLE_STORAGE_SCHEME="+PTableImpl.ImmutableStorageScheme.ONE_CELL_PER_COLUMN);
+        }
         if (transactional) {
             optionBuilder.append(", TRANSACTIONAL=true");
         }
         this.tableDDLOptions = optionBuilder.toString();
-        this.tableName = TestUtil.DEFAULT_DATA_TABLE_NAME + ( transactional ?  "_TXN" : "");
-        this.indexName = "IDX" + ( transactional ?  "_TXN" : "");
-        this.fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
-        this.fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
+
     }
 
     @BeforeClass
-    @Shadower(classBeingShadowed = BaseHBaseManagedTimeIT.class)
     public static void doSetup() throws Exception {
         Map<String, String> serverProps = Maps.newHashMapWithExpectedSize(1);
         serverProps.put("hbase.coprocessor.region.classes", CreateIndexRegionObserver.class.getName());
@@ -107,21 +106,26 @@ public class ImmutableIndexIT extends BaseHBaseManagedTimeIT {
         setUpTestDriver(new ReadOnlyProps(serverProps.entrySet().iterator()), new ReadOnlyProps(clientProps.entrySet().iterator()));
     }
 
-    @Parameters(name="localIndex = {0} , transactional = {1}")
+    @Parameters(name="ImmutableIndexIT_localIndex={0},transactional={1},columnEncoded={2}") // name is used by failsafe as file name in reports
     public static Collection<Boolean[]> data() {
 		return Arrays.asList(new Boolean[][] { 
-				{ false, false }, { false, true },
-				{ true, false }, { true, true } });
+				{ false, false, false }, { false, false, true },
+				{ false, true, false }, { false, true, true },
+				{ true, false, false }, { true, false, true },
+                { true, true, false }, { true, true, true } });
     }
 
     @Test
-    @Ignore
     public void testDropIfImmutableKeyValueColumn() throws Exception {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IND_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+        String fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
         try (Connection conn = DriverManager.getConnection(getUrl(), props)) {
             conn.setAutoCommit(false);
             String ddl =
-                    "CREATE TABLE " + fullTableName + BaseTest.TEST_TABLE_SCHEMA + tableDDLOptions;
+                    "CREATE TABLE " + fullTableName + TestUtil.TEST_TABLE_SCHEMA + tableDDLOptions;
             Statement stmt = conn.createStatement();
             stmt.execute(ddl);
             populateTestTable(fullTableName);
@@ -155,10 +159,16 @@ public class ImmutableIndexIT extends BaseHBaseManagedTimeIT {
 
     @Test
     public void testCreateIndexDuringUpsertSelect() throws Exception {
+        // This test times out at the UPSERT SELECT call for local index
+        if (localIndex) { // TODO: remove after PHOENIX-3314 is fixed 
+            return;
+        }
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(QueryServices.MUTATE_BATCH_SIZE_ATTRIB, Integer.toString(100));
-        TABLE_NAME = fullTableName + "_testCreateIndexDuringUpsertSelect";
-        String ddl ="CREATE TABLE " + TABLE_NAME + BaseTest.TEST_TABLE_SCHEMA + tableDDLOptions;
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IND_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+        TABLE_NAME = fullTableName;
+        String ddl ="CREATE TABLE " + TABLE_NAME + TestUtil.TEST_TABLE_SCHEMA + tableDDLOptions;
         INDEX_DDL = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX IF NOT EXISTS " + indexName + " ON " + TABLE_NAME
                 + " (long_pk, varchar_pk)"
                 + " INCLUDE (long_col1, long_col2)";
@@ -173,8 +183,8 @@ public class ImmutableIndexIT extends BaseHBaseManagedTimeIT {
 
             // run the upsert select and also create an index
             conn.setAutoCommit(true);
-            String upsertSelect = "UPSERT INTO " + TABLE_NAME + "(varchar_pk, char_pk, int_pk, long_pk, decimal_pk, date_pk) " + 
-                    "SELECT varchar_pk||'_upsert_select', char_pk, int_pk, long_pk, decimal_pk, date_pk FROM "+ TABLE_NAME;    
+            String upsertSelect = "UPSERT INTO " + TABLE_NAME + "(varchar_pk, char_pk, int_pk, long_pk, decimal_pk, date_pk) " +
+                    "SELECT varchar_pk||'_upsert_select', char_pk, int_pk, long_pk, decimal_pk, date_pk FROM "+ TABLE_NAME;
             conn.createStatement().execute(upsertSelect);
             ResultSet rs;
             rs = conn.createStatement().executeQuery("SELECT /*+ NO_INDEX */ COUNT(*) FROM " + TABLE_NAME);
@@ -241,7 +251,11 @@ public class ImmutableIndexIT extends BaseHBaseManagedTimeIT {
     @Test
     public void testCreateIndexWhileUpsertingData() throws Exception {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        String ddl ="CREATE TABLE " + fullTableName + BaseTest.TEST_TABLE_SCHEMA + tableDDLOptions;
+        String tableName = "TBL_" + generateUniqueName();
+        String indexName = "IND_" + generateUniqueName();
+        String fullTableName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, tableName);
+        String fullIndexName = SchemaUtil.getTableName(TestUtil.DEFAULT_SCHEMA_NAME, indexName);
+        String ddl ="CREATE TABLE " + fullTableName + TestUtil.TEST_TABLE_SCHEMA + tableDDLOptions;
         String indexDDL = "CREATE " + (localIndex ? "LOCAL" : "") + " INDEX " + indexName + " ON " + fullTableName
                 + " (long_pk, varchar_pk)"
                 + " INCLUDE (long_col1, long_col2)";

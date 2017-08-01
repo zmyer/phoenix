@@ -17,7 +17,6 @@
  */
 package org.apache.phoenix.compile;
 
-import java.io.IOException;
 import java.sql.SQLException;
 import java.util.List;
 
@@ -32,11 +31,12 @@ import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixStatement;
 import org.apache.phoenix.jdbc.PhoenixStatement.Operation;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTable.ImmutableStorageScheme;
 import org.apache.phoenix.schema.SortOrder;
 import org.apache.phoenix.schema.TableRef;
+import org.apache.phoenix.schema.tuple.Tuple;
 import org.apache.phoenix.schema.types.PLong;
 import org.apache.phoenix.util.ByteUtil;
-import org.apache.phoenix.util.ScanUtil;
 
 import com.google.common.collect.Lists;
 
@@ -55,7 +55,7 @@ public class PostLocalIndexDDLCompiler {
         this.tableName = tableName;
     }
 
-	public MutationPlan compile(final PTable index) throws SQLException {
+	public MutationPlan compile(PTable index) throws SQLException {
 		try (final PhoenixStatement statement = new PhoenixStatement(connection)) {
             String query = "SELECT count(*) FROM " + tableName;
             final QueryPlan plan = statement.compileQuery(query);
@@ -64,6 +64,12 @@ public class PostLocalIndexDDLCompiler {
             ImmutableBytesWritable ptr = new ImmutableBytesWritable();
             final PTable dataTable = tableRef.getTable();
             List<PTable> indexes = Lists.newArrayListWithExpectedSize(1);
+            for (PTable indexTable : dataTable.getIndexes()) {
+                if (indexTable.getKey().equals(index.getKey())) {
+                    index = indexTable;
+                    break;
+                }
+            }
             // Only build newly created index.
             indexes.add(index);
             IndexMaintainer.serialize(dataTable, ptr, indexes, plan.getContext().getConnection());
@@ -72,12 +78,16 @@ public class PostLocalIndexDDLCompiler {
             // rows per region as a result. The value of the attribute will be our persisted
             // index maintainers.
             // Define the LOCAL_INDEX_BUILD as a new static in BaseScannerRegionObserver
-            scan.setAttribute(BaseScannerRegionObserver.LOCAL_INDEX_BUILD, ByteUtil.copyKeyBytesIfNecessary(ptr));
+            scan.setAttribute(BaseScannerRegionObserver.LOCAL_INDEX_BUILD_PROTO, ByteUtil.copyKeyBytesIfNecessary(ptr));
             // By default, we'd use a FirstKeyOnly filter as nothing else needs to be projected for count(*).
             // However, in this case, we need to project all of the data columns that contribute to the index.
             IndexMaintainer indexMaintainer = index.getIndexMaintainer(dataTable, connection);
             for (ColumnReference columnRef : indexMaintainer.getAllColumns()) {
-                scan.addColumn(columnRef.getFamily(), columnRef.getQualifier());
+                if (index.getImmutableStorageScheme() == ImmutableStorageScheme.SINGLE_CELL_ARRAY_WITH_OFFSETS) {
+                    scan.addFamily(columnRef.getFamily());
+                } else {
+                    scan.addColumn(columnRef.getFamily(), columnRef.getQualifier());
+                }
             }
 
             // Go through MutationPlan abstraction so that we can create local indexes
@@ -87,14 +97,18 @@ public class PostLocalIndexDDLCompiler {
                 @Override
                 public MutationState execute() throws SQLException {
                     connection.getMutationState().commitDDLFence(dataTable);
-                    Cell kv = plan.iterator().next().getValue(0);
-                    ImmutableBytesWritable tmpPtr = new ImmutableBytesWritable(kv.getValueArray(), kv.getValueOffset(), kv.getValueLength());
-                    // A single Cell will be returned with the count(*) - we decode that here
-                    long rowCount = PLong.INSTANCE.getCodec().decodeLong(tmpPtr, SortOrder.getDefault());
+                    Tuple tuple = plan.iterator().next();
+                    long rowCount = 0;
+                    if (tuple != null) {
+                        Cell kv = tuple.getValue(0);
+                        ImmutableBytesWritable tmpPtr = new ImmutableBytesWritable(kv.getValueArray(), kv.getValueOffset(), kv.getValueLength());
+                        // A single Cell will be returned with the count(*) - we decode that here
+                        rowCount = PLong.INSTANCE.getCodec().decodeLong(tmpPtr, SortOrder.getDefault());
+                    }
                     // The contract is to return a MutationState that contains the number of rows modified. In this
                     // case, it's the number of rows in the data table which corresponds to the number of index
                     // rows that were added.
-                    return new MutationState(0, connection, rowCount);
+                    return new MutationState(0, 0, connection, rowCount);
                 }
 
             };

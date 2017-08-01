@@ -20,10 +20,10 @@ package org.apache.phoenix.execute;
 import java.sql.SQLException;
 import java.util.List;
 
+import org.apache.hadoop.hbase.client.Scan;
 import org.apache.phoenix.compile.ExplainPlan;
 import org.apache.phoenix.compile.QueryPlan;
 import org.apache.phoenix.expression.Expression;
-import org.apache.phoenix.iterate.DefaultParallelScanGrouper;
 import org.apache.phoenix.iterate.DelegateResultIterator;
 import org.apache.phoenix.iterate.FilterResultIterator;
 import org.apache.phoenix.iterate.ParallelScanGrouper;
@@ -52,15 +52,10 @@ public class TupleProjectionPlan extends DelegateQueryPlan {
 
         return new ExplainPlan(planSteps);
     }
-    
-    @Override
-    public ResultIterator iterator() throws SQLException {
-    	return iterator(DefaultParallelScanGrouper.getInstance());
-    }
 
     @Override
-    public ResultIterator iterator(ParallelScanGrouper scanGrouper) throws SQLException {
-        ResultIterator iterator = new DelegateResultIterator(delegate.iterator(scanGrouper)) {
+    public ResultIterator iterator(ParallelScanGrouper scanGrouper, Scan scan) throws SQLException {
+        ResultIterator iterator = new DelegateResultIterator(delegate.iterator(scanGrouper, scan)) {
             
             @Override
             public Tuple next() throws SQLException {

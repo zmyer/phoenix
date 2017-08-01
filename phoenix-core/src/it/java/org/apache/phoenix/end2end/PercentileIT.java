@@ -23,7 +23,6 @@ import static org.apache.phoenix.util.TestUtil.A_VALUE;
 import static org.apache.phoenix.util.TestUtil.B_VALUE;
 import static org.apache.phoenix.util.TestUtil.C_VALUE;
 import static org.apache.phoenix.util.TestUtil.INDEX_DATA_SCHEMA;
-import static org.apache.phoenix.util.TestUtil.INDEX_DATA_TABLE;
 import static org.apache.phoenix.util.TestUtil.ROW1;
 import static org.apache.phoenix.util.TestUtil.ROW2;
 import static org.apache.phoenix.util.TestUtil.ROW3;
@@ -36,6 +35,8 @@ import static org.apache.phoenix.util.TestUtil.ROW9;
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.math.BigDecimal;
@@ -45,6 +46,8 @@ import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Statement;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Properties;
@@ -53,22 +56,20 @@ import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.util.DateUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.PropertiesUtil;
+import org.apache.phoenix.util.TestUtil;
 import org.junit.Test;
 
 
-public class PercentileIT extends BaseClientManagedTimeIT {
+public class PercentileIT extends ParallelStatsDisabledIT {
 
     @Test
     public void testPercentile() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM aTable";
+        String query = "SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -85,15 +86,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentileDesc() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY A_INTEGER DESC) FROM aTable";
+        String query = "SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY A_INTEGER DESC) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -110,15 +108,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
     
     @Test
     public void testPercentileWithGroupby() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT A_STRING, PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM aTable GROUP BY A_STRING";
+        String query = "SELECT A_STRING, PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM " + tableName + " GROUP BY A_STRING";
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -146,15 +141,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentileWithGroupbyAndOrderBy() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT A_STRING, PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY A_INTEGER ASC) AS PC FROM aTable GROUP BY A_STRING ORDER BY PC";
+        String query = "SELECT A_STRING, PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY A_INTEGER ASC) AS PC FROM " + tableName + " GROUP BY A_STRING ORDER BY PC";
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -182,16 +174,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
 	public void testPercentileDiscAsc() throws Exception {
-		long ts = nextTimestamp();
 		String tenantId = getOrganizationId();
-		initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-		String query = "SELECT PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM aTable";
+		String query = "SELECT PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM " + tableName;
 
 		Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-		props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB,
-				Long.toString(ts + 2)); // Execute at
-										// timestamp 2
 		Connection conn = DriverManager.getConnection(getUrl(), props);
 		try {
 			PreparedStatement statement = conn.prepareStatement(query);
@@ -207,16 +195,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 	
 	@Test
 	public void testPercentileDiscDesc() throws Exception {
-		long ts = nextTimestamp();
 		String tenantId = getOrganizationId();
-		initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-		String query = "SELECT PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY A_INTEGER DESC) FROM aTable";
+		String query = "SELECT PERCENTILE_DISC(0.9) WITHIN GROUP (ORDER BY A_INTEGER DESC) FROM " + tableName;
 
 		Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-		props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB,
-				Long.toString(ts + 2)); // Execute at
-										// timestamp 2
 		Connection conn = DriverManager.getConnection(getUrl(), props);
 		try {
 			PreparedStatement statement = conn.prepareStatement(query);
@@ -232,15 +216,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
     
     @Test
     public void testPercentileDiscWithGroupby() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT A_STRING, PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM aTable GROUP BY A_STRING";
+        String query = "SELECT A_STRING, PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM " + tableName + " GROUP BY A_STRING";
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -265,15 +246,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentileDiscWithGroupbyAndOrderBy() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT A_STRING, PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM aTable GROUP BY A_STRING ORDER BY A_STRING DESC";
+        String query = "SELECT A_STRING, PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM " + tableName + " GROUP BY A_STRING ORDER BY A_STRING DESC";
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -298,15 +276,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentRank() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT PERCENT_RANK(5) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM aTable";
+        String query = "SELECT PERCENT_RANK(5) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -323,15 +298,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentRankWithNegativeNumeric() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT PERCENT_RANK(-2) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM aTable";
+        String query = "SELECT PERCENT_RANK(-2) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -348,15 +320,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentRankDesc() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT PERCENT_RANK(8.9) WITHIN GROUP (ORDER BY A_INTEGER DESC) FROM aTable";
+        String query = "SELECT PERCENT_RANK(8.9) WITHIN GROUP (ORDER BY A_INTEGER DESC) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -373,15 +342,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentRankDescOnVARCHARColumn() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT PERCENT_RANK('ba') WITHIN GROUP (ORDER BY A_STRING DESC) FROM aTable";
+        String query = "SELECT PERCENT_RANK('ba') WITHIN GROUP (ORDER BY A_STRING DESC) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -398,15 +364,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentRankDescOnDECIMALColumn() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT PERCENT_RANK(2) WITHIN GROUP (ORDER BY x_decimal ASC) FROM aTable";
+        String query = "SELECT PERCENT_RANK(2) WITHIN GROUP (ORDER BY x_decimal ASC) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -423,15 +386,12 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testMultiplePercentRanksOnSelect() throws Exception {
-        long ts = nextTimestamp();
         String tenantId = getOrganizationId();
-        initATableValues(tenantId, null, getDefaultSplits(tenantId), null, ts);
+        String tableName = initATableValues(tenantId, null, getDefaultSplits(tenantId), null, null);
 
-        String query = "SELECT PERCENT_RANK(2) WITHIN GROUP (ORDER BY x_decimal ASC), PERCENT_RANK(8.9) WITHIN GROUP (ORDER BY A_INTEGER DESC) FROM aTable";
+        String query = "SELECT PERCENT_RANK(2) WITHIN GROUP (ORDER BY x_decimal ASC), PERCENT_RANK(8.9) WITHIN GROUP (ORDER BY A_INTEGER DESC) FROM " + tableName;
 
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
-        props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at
-                                                                                     // timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             PreparedStatement statement = conn.prepareStatement(query);
@@ -451,14 +411,14 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentileContOnDescPKColumn() throws Exception {
-        ensureTableCreated(getUrl(), INDEX_DATA_TABLE);
-        populateINDEX_DATA_TABLETable();
-
-        String query = "SELECT PERCENTILE_CONT(1) WITHIN GROUP (ORDER BY long_pk ASC) FROM " + INDEX_DATA_SCHEMA
-                + QueryConstants.NAME_SEPARATOR + INDEX_DATA_TABLE;
+        String indexDataTableName = generateUniqueName();
+        String fullTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + indexDataTableName;
+        String query = "SELECT PERCENTILE_CONT(1) WITHIN GROUP (ORDER BY long_pk ASC) FROM " + fullTableName;
 
         Connection conn = DriverManager.getConnection(getUrl());
         try {
+            conn.createStatement().execute("create table " + fullTableName + TestUtil.TEST_TABLE_SCHEMA + "IMMUTABLE_ROWS=true");
+            populateINDEX_DATA_TABLETable(indexDataTableName);
             PreparedStatement statement = conn.prepareStatement(query);
             ResultSet rs = statement.executeQuery();
             assertTrue(rs.next());
@@ -473,14 +433,13 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentRankOnDescPKColumn() throws Exception {
-        ensureTableCreated(getUrl(), INDEX_DATA_TABLE);
-        populateINDEX_DATA_TABLETable();
-
-        String query = "SELECT PERCENT_RANK(2) WITHIN GROUP (ORDER BY long_pk ASC) FROM " + INDEX_DATA_SCHEMA
-                + QueryConstants.NAME_SEPARATOR + INDEX_DATA_TABLE;
-
+        String indexDataTableName = generateUniqueName();
         Connection conn = DriverManager.getConnection(getUrl());
         try {
+            String fullTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + indexDataTableName;
+            String query = "SELECT PERCENT_RANK(2) WITHIN GROUP (ORDER BY long_pk ASC) FROM " + fullTableName;
+            conn.createStatement().execute("create table " + fullTableName + TestUtil.TEST_TABLE_SCHEMA + "IMMUTABLE_ROWS=true");
+            populateINDEX_DATA_TABLETable(indexDataTableName);
             PreparedStatement statement = conn.prepareStatement(query);
             ResultSet rs = statement.executeQuery();
             assertTrue(rs.next());
@@ -495,14 +454,14 @@ public class PercentileIT extends BaseClientManagedTimeIT {
 
     @Test
     public void testPercentileDiscOnDescPKColumn() throws Exception {
-        ensureTableCreated(getUrl(), INDEX_DATA_TABLE);
-        populateINDEX_DATA_TABLETable();
-
-        String query = "SELECT PERCENTILE_DISC(0.4) WITHIN GROUP (ORDER BY long_pk DESC) FROM " + INDEX_DATA_SCHEMA
-                + QueryConstants.NAME_SEPARATOR + INDEX_DATA_TABLE;
+        String indexDataTableName = generateUniqueName();
 
         Connection conn = DriverManager.getConnection(getUrl());
         try {
+            String fullTableName = INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + indexDataTableName;
+            String query = "SELECT PERCENTILE_DISC(0.4) WITHIN GROUP (ORDER BY long_pk DESC) FROM " + fullTableName;
+            conn.createStatement().execute("create table " + fullTableName + TestUtil.TEST_TABLE_SCHEMA + "IMMUTABLE_ROWS=true");
+            populateINDEX_DATA_TABLETable(indexDataTableName);
             PreparedStatement statement = conn.prepareStatement(query);
             ResultSet rs = statement.executeQuery();
             assertTrue(rs.next());
@@ -514,12 +473,37 @@ public class PercentileIT extends BaseClientManagedTimeIT {
         }
     }
 
-    private static void populateINDEX_DATA_TABLETable() throws SQLException {
+    @Test
+    public void testPercentileOnEmptyTable() throws Exception {
+        final String tableName = generateUniqueName();
+        // Ensure the test table is created
+        ensureTableCreated(getUrl(), tableName, ATABLE_NAME, null, null);
+
+        Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
+
+        try (Connection conn = DriverManager.getConnection(getUrl(), props);
+                Statement stmt = conn.createStatement()) {
+            // Remove all the records in the table
+            assertFalse(stmt.execute("DELETE FROM " + tableName));
+
+            // Execute a query with PERCENTILE_CONT against the empty table
+            String query = "SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY A_INTEGER ASC) FROM "
+                    + tableName;
+            ResultSet rs = stmt.executeQuery(query);
+            assertNotNull(rs);
+            assertTrue(rs.next());
+            // PERCENTILE_CONT can't compute anything, so return `null`
+            assertNull(rs.getBigDecimal(1));
+            assertFalse(rs.next());
+        }
+    }
+
+    private static void populateINDEX_DATA_TABLETable(String indexDataTableName) throws SQLException {
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(getUrl(), props);
         Date date = DateUtil.parseDate("2015-01-01 00:00:00");
         try {
-            String upsert = "UPSERT INTO " + INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + INDEX_DATA_TABLE
+            String upsert = "UPSERT INTO " + INDEX_DATA_SCHEMA + QueryConstants.NAME_SEPARATOR + indexDataTableName
                     + " VALUES(?, ?, ?, ?, ?, ?)";
             PreparedStatement stmt = conn.prepareStatement(upsert);
             stmt.setString(1, "varchar1");
@@ -552,12 +536,13 @@ public class PercentileIT extends BaseClientManagedTimeIT {
         }
     }
 
-    protected static void initATableValues(String tenantId1, String tenantId2, byte[][] splits,
+    private static String initATableValues(String tenantId1, String tenantId2, byte[][] splits,
             Date date, Long ts) throws Exception {
+        String tableName = generateUniqueName();
         if (ts == null) {
-            ensureTableCreated(getUrl(), ATABLE_NAME, splits);
+            ensureTableCreated(getUrl(), tableName, ATABLE_NAME, splits, null);
         } else {
-            ensureTableCreated(getUrl(), ATABLE_NAME, splits, ts - 2);
+            ensureTableCreated(getUrl(), tableName, ATABLE_NAME, splits, ts - 2, null);
         }
 
         Properties props = new Properties();
@@ -567,7 +552,7 @@ public class PercentileIT extends BaseClientManagedTimeIT {
         Connection conn = DriverManager.getConnection(getUrl(), props);
         try {
             // Insert all rows at ts
-            PreparedStatement stmt = conn.prepareStatement("upsert into " + "ATABLE("
+            PreparedStatement stmt = conn.prepareStatement("upsert into " + tableName + "("
                     + "    ORGANIZATION_ID, " + "    ENTITY_ID, " + "    A_STRING, "
                     + "    B_STRING, " + "    A_INTEGER, " + "    A_DATE, " + "    X_DECIMAL, "
                     + "    X_LONG, " + "    X_INTEGER," + "    Y_INTEGER)"
@@ -713,6 +698,7 @@ public class PercentileIT extends BaseClientManagedTimeIT {
             conn.commit();
         } finally {
             conn.close();
+            return tableName;
         }
     }
 }

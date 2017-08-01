@@ -81,6 +81,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -293,17 +294,24 @@ public class HiveTestUtil {
         qJavaVersionSpecificOutput = new HashSet<String>();
         this.clusterType = clusterType;
 
+        // Using randomUUID for dfs cluster
+        System.setProperty("test.build.data", "target/test-data/hive-" + UUID.randomUUID().toString
+                ());
+
         HadoopShims shims = ShimLoader.getHadoopShims();
-        int numberOfDataNodes = 4;
+        int numberOfDataNodes = 1;
 
         if (clusterType != MiniClusterType.none) {
             dfs = shims.getMiniDfs(conf, numberOfDataNodes, true, null);
             FileSystem fs = dfs.getFileSystem();
             String uriString = WindowsPathUtil.getHdfsUriString(fs.getUri().toString());
             if (clusterType == MiniClusterType.tez) {
-                mr = shims.getMiniTezCluster(conf, 4, uriString, 1);
+                conf.set("hive.execution.engine", "tez");
+                mr = shims.getMiniTezCluster(conf, 1, uriString, 1);
             } else {
-                mr = shims.getMiniMrCluster(conf, 4, uriString, 1);
+                conf.set("hive.execution.engine", "mr");
+                mr = shims.getMiniMrCluster(conf, 1, uriString, 1);
+
             }
         }
 
@@ -562,6 +570,7 @@ public class HiveTestUtil {
 
     public void init() throws Exception {
         testWarehouse = conf.getVar(HiveConf.ConfVars.METASTOREWAREHOUSE);
+        conf.setBoolVar(HiveConf.ConfVars.SUBMITLOCALTASKVIACHILD, false);
         String execEngine = conf.get("hive.execution.engine");
         conf.set("hive.execution.engine", "mr");
         SessionState.start(conf);
@@ -685,6 +694,7 @@ public class HiveTestUtil {
     }
 
     public int executeClient(String tname) {
+        conf.set("mapreduce.job.name", "test");
         return cliDriver.processLine(getCommands(tname), false);
     }
 
@@ -1101,27 +1111,6 @@ public class HiveTestUtil {
                 outputTestFailureHelpMessage();
             }
         }
-    }
-
-    /**
-     * Setup to execute a set of query files. Uses HiveTestUtil to do so.
-     *
-     * @param qfiles array of input query files containing arbitrary number of hive
-     *               queries
-     * @param resDir output directory
-     * @param logDir log directory
-     * @return one HiveTestUtil for each query file
-     */
-    public static HiveTestUtil[] queryListRunnerSetup(File[] qfiles, String resDir,
-                                                      String logDir) throws Exception {
-        HiveTestUtil[] qt = new HiveTestUtil[qfiles.length];
-        for (int i = 0; i < qfiles.length; i++) {
-            qt[i] = new HiveTestUtil(resDir, logDir, MiniClusterType.mr, null, "0.20");
-            qt[i].addFile(qfiles[i]);
-            qt[i].clearTestSideEffects();
-        }
-
-        return qt;
     }
 
     /**

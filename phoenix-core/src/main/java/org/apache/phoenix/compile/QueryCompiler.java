@@ -174,19 +174,16 @@ public class QueryCompiler {
                 }
             }
             QueryPlan subPlan = compileSubquery(subSelect, true);
-            TupleProjector projector = new TupleProjector(subPlan.getProjector());
-            subPlan = new TupleProjectionPlan(subPlan, projector, null);
             plans.add(subPlan);
         }
-        UnionCompiler.checkProjectionNumAndTypes(plans);
-
-        TableRef tableRef = UnionCompiler.contructSchemaTable(statement, plans.get(0), select.hasWildcard() ? null : select.getSelect());
+        TableRef tableRef = UnionCompiler.contructSchemaTable(statement, plans,
+            select.hasWildcard() ? null : select.getSelect());
         ColumnResolver resolver = FromCompiler.getResolver(tableRef);
         StatementContext context = new StatementContext(statement, resolver, scan, sequenceManager);
-
         QueryPlan plan = compileSingleFlatQuery(context, select, statement.getParameters(), false, false, null, null, false);
-        plan = new UnionPlan(context, select, tableRef, plan.getProjector(), plan.getLimit(), plan.getOffset(),
-                plan.getOrderBy(), GroupBy.EMPTY_GROUP_BY, plans, context.getBindManager().getParameterMetaData());
+        plan = new UnionPlan(context, select, tableRef, plan.getProjector(), plan.getLimit(),
+            plan.getOffset(), plan.getOrderBy(), GroupBy.EMPTY_GROUP_BY, plans,
+            context.getBindManager().getParameterMetaData());
         return plan;
     }
 
@@ -564,6 +561,7 @@ public class QueryCompiler {
         RowProjector projector = ProjectionCompiler.compile(context, select, groupBy, asSubquery ? Collections.<PDatum>emptyList() : targetColumns, where);
         OrderBy orderBy = OrderByCompiler.compile(context, select, groupBy, limit, offset, projector,
                 groupBy == GroupBy.EMPTY_GROUP_BY ? innerPlanTupleProjector : null, isInRowKeyOrder);
+        context.getAggregationManager().compile(context, groupBy);
         // Final step is to build the query plan
         if (!asSubquery) {
             int maxRows = statement.getMaxRows();

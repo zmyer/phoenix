@@ -17,8 +17,14 @@
  */
 package org.apache.phoenix.compile;
 
+import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.MAX_QUALIFIER;
+import static org.apache.phoenix.coprocessor.BaseScannerRegionObserver.MIN_QUALIFIER;
+import static org.apache.phoenix.query.QueryConstants.ENCODED_CQ_COUNTER_INITIAL_VALUE;
+import static org.apache.phoenix.query.QueryConstants.ENCODED_EMPTY_COLUMN_NAME;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.sql.Array;
@@ -32,17 +38,22 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.phoenix.compile.OrderByCompiler.OrderBy;
 import org.apache.phoenix.jdbc.PhoenixPreparedStatement;
+import org.apache.phoenix.jdbc.PhoenixResultSet;
 import org.apache.phoenix.jdbc.PhoenixStatement;
 import org.apache.phoenix.query.BaseConnectionlessQueryTest;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.util.PhoenixRuntime;
+import org.apache.phoenix.util.PropertiesUtil;
 import org.apache.phoenix.util.QueryUtil;
 import org.apache.phoenix.util.SchemaUtil;
+import org.apache.phoenix.util.TestUtil;
 import org.junit.Test;
 
 import com.google.common.base.Joiner;
@@ -444,12 +455,12 @@ public class QueryOptimizerTest extends BaseConnectionlessQueryTest {
             conn.createStatement().execute("create table "
                     + "XYZ.ABC"
                     + "   (organization_id char(15) not null, \n"
-                    + "    dec DECIMAL(10,2) not null,\n"
+                    + "    \"DEC\" DECIMAL(10,2) not null,\n"
                     + "    a_string_array varchar(100) array[] not null,\n"
                     + "    b_string varchar(100),\n"
                     + "    CF.a_integer integer,\n"
                     + "    a_date date,\n"
-                    + "    CONSTRAINT pk PRIMARY KEY (organization_id, dec, a_string_array)\n"
+                    + "    CONSTRAINT pk PRIMARY KEY (organization_id, \"DEC\", a_string_array)\n"
                     + ")" + (salted ? "SALT_BUCKETS=4" : "") + (multitenant == true ? (salted ? ",MULTI_TENANT=true" : "MULTI_TENANT=true") : ""));
 
             
@@ -470,10 +481,10 @@ public class QueryOptimizerTest extends BaseConnectionlessQueryTest {
             String expectedColumnNameDataTypes = multitenant ? "\"DEC\" DECIMAL(10,2),\"A_STRING_ARRAY\" VARCHAR(100) ARRAY" : "\"ORGANIZATION_ID\" CHAR(15),\"DEC\" DECIMAL(10,2),\"A_STRING_ARRAY\" VARCHAR(100) ARRAY";
             String tableName = multitenant ? "ABC_VIEW" : "XYZ.ABC";
             String tenantFilter = multitenant ? "" : "organization_id = ? AND ";
-            String orderByRowKeyClause = multitenant ? "dec" : "organization_id";
+            String orderByRowKeyClause = multitenant ? "DEC" : "organization_id";
             
             // Filter on row key columns of data table. No order by. No limit.
-            sql = "SELECT CF.a_integer FROM " + tableName + " where " + tenantFilter + " dec = ? and a_string_array = ?";
+            sql = "SELECT CF.a_integer FROM " + tableName + " where " + tenantFilter + " \"DEC\" = ? and a_string_array = ?";
             stmt = conn.prepareStatement(sql);
             int counter = 1;
             if (!multitenant) {
@@ -489,7 +500,7 @@ public class QueryOptimizerTest extends BaseConnectionlessQueryTest {
             
             counter = 1;
             // Filter on row key columns of data table. Order by row key columns. Limit specified.
-            sql = "SELECT CF.a_integer FROM " + tableName + " where " + tenantFilter + " dec = ? and a_string_array = ? ORDER BY " + orderByRowKeyClause + " LIMIT 100";
+            sql = "SELECT CF.a_integer FROM " + tableName + " where " + tenantFilter + " \"DEC\" = ? and a_string_array = ? ORDER BY " + orderByRowKeyClause + " LIMIT 100";
             stmt = conn.prepareStatement(sql);
             if (!multitenant) {
                 stmt.setString(counter++, "ORGID");
@@ -501,7 +512,7 @@ public class QueryOptimizerTest extends BaseConnectionlessQueryTest {
             
             counter = 1;
             // Filter on row key columns of data table. Order by non-row key columns. Limit specified.
-            sql = "SELECT CF.a_integer FROM " + tableName + " where " + tenantFilter + " dec = ? and a_string_array = ? ORDER BY a_date LIMIT 100";
+            sql = "SELECT CF.a_integer FROM " + tableName + " where " + tenantFilter + " \"DEC\" = ? and a_string_array = ? ORDER BY a_date LIMIT 100";
             stmt = conn.prepareStatement(sql);
             if (!multitenant) {
                 stmt.setString(counter++, "ORGID");
@@ -613,12 +624,93 @@ public class QueryOptimizerTest extends BaseConnectionlessQueryTest {
         assertEquals("Query should not use index", PTableType.VIEW, plan.getTableRef().getTable().getType());
     }
 
+    @Test
+    public void testDistinctPrefixOnVarcharIndex() throws Exception {
+        Connection conn = DriverManager.getConnection(getUrl());
+        conn.createStatement().execute("CREATE TABLE t (k INTEGER NOT NULL PRIMARY KEY, v1 VARCHAR, v2 VARCHAR)");
+        conn.createStatement().execute("CREATE INDEX idx ON t(v1)");
+        PhoenixStatement stmt = conn.createStatement().unwrap(PhoenixStatement.class);
+        QueryPlan plan = stmt.optimizeQuery("SELECT COUNT(DISTINCT v1) FROM t");
+        assertTrue(plan.getGroupBy().isOrderPreserving());
+        assertFalse(plan.getGroupBy().getKeyExpressions().isEmpty());
+        assertEquals("IDX", plan.getTableRef().getTable().getTableName().getString());
+    }
+
+    @Test
+    public void testDistinctPrefixOnIntIndex() throws Exception {
+        Connection conn = DriverManager.getConnection(getUrl());
+        conn.createStatement().execute("CREATE TABLE t (k INTEGER NOT NULL PRIMARY KEY, v1 INTEGER, v2 VARCHAR)");
+        conn.createStatement().execute("CREATE INDEX idx ON t(v1)");
+        PhoenixStatement stmt = conn.createStatement().unwrap(PhoenixStatement.class);
+        QueryPlan plan = stmt.optimizeQuery("SELECT COUNT(DISTINCT v1) FROM t");
+        assertTrue(plan.getGroupBy().isOrderPreserving());
+        assertFalse(plan.getGroupBy().getKeyExpressions().isEmpty());
+        assertEquals("IDX", plan.getTableRef().getTable().getTableName().getString());
+    }
+
+    @Test
+    public void testTableUsedWithQueryMore() throws Exception {
+        Connection conn = DriverManager.getConnection(getUrl());
+        conn.createStatement().execute("CREATE TABLE t (k1 CHAR(3) NOT NULL, k2 CHAR(15) NOT NULL, k3 DATE NOT NULL, k4 CHAR(15) NOT NULL, CONSTRAINT pk PRIMARY KEY (k1,k2,k3,k4))");
+        conn.createStatement().execute("CREATE INDEX idx ON t(k1,k3,k2,k4)");
+        PhoenixStatement stmt = conn.createStatement().unwrap(PhoenixStatement.class);
+        QueryPlan plan = stmt.optimizeQuery("SELECT * FROM t WHERE (k1,k2,k3,k4) > ('001','001xx000003DHml',to_date('2015-10-21 09:50:55.0'),'017xx0000022FuI')");
+        assertEquals("T", plan.getTableRef().getTable().getTableName().getString());
+    }
+
+    @Test
+    public void testViewUsedWithQueryMoreSalted() throws Exception {
+        testViewUsedWithQueryMore(3);
+    }
+    
+    @Test
+    public void testViewUsedWithQueryMoreUnsalted() throws Exception {
+        testViewUsedWithQueryMore(null);
+    }
+    
+    private void testViewUsedWithQueryMore(Integer saltBuckets) throws Exception {
+        Connection conn = DriverManager.getConnection(getUrl());
+        int offset = saltBuckets == null ? 0 : 1;
+        conn.createStatement().execute("CREATE TABLE MY_TABLES.MY_TABLE "
+                + "(ORGANIZATION_ID CHAR(15) NOT NULL, "
+                + "PKCOL1 CHAR(15) NOT NULL,"
+                + "PKCOL2 CHAR(15) NOT NULL,"
+                + "PKCOL3 CHAR(15) NOT NULL,"
+                + "PKCOL4 CHAR(15) NOT NULL,COL1 "
+                + "CHAR(15),"
+                + "COL2 CHAR(15)"
+                + "CONSTRAINT PK PRIMARY KEY (ORGANIZATION_ID,PKCOL1,PKCOL2,PKCOL3,PKCOL4)) MULTI_TENANT=true" + (saltBuckets == null ? "" : (",SALT_BUCKETS=" + saltBuckets)));
+        conn.createStatement().execute("CREATE INDEX MY_TABLE_INDEX \n" + 
+                "ON MY_TABLES.MY_TABLE (PKCOL1, PKCOL3, PKCOL2, PKCOL4)\n" + 
+                "INCLUDE (COL1, COL2)");
+        Properties props = PropertiesUtil.deepCopy(TestUtil.TEST_PROPERTIES);
+        props.setProperty(PhoenixRuntime.TENANT_ID_ATTRIB, "000000000000000");
+        Connection tsconn = DriverManager.getConnection(getUrl(), props);
+        tsconn.createStatement().execute("CREATE VIEW MY_TABLE_MT_VIEW AS SELECT * FROM MY_TABLES.MY_TABLE");
+        PhoenixStatement stmt = tsconn.createStatement().unwrap(PhoenixStatement.class);
+        QueryPlan plan = stmt.optimizeQuery("select * from my_table_mt_view where (pkcol1, pkcol2, pkcol3, pkcol4) > ('0', '0', '0', '0')");
+        assertEquals("MY_TABLE_MT_VIEW", plan.getTableRef().getTable().getTableName().getString());
+        
+        plan = stmt.compileQuery("select * from my_table_mt_view where (pkcol1, pkcol2) > ('0', '0') and pkcol3 = '000000000000000' and pkcol4 = '000000000000000'");
+        assertEquals(3 + offset, plan.getContext().getScanRanges().getBoundPkColumnCount());
+        plan = stmt.compileQuery("select * from my_table_mt_view where (pkcol3, pkcol4) > ('0', '0') and pkcol1 = '000000000000000'");
+        assertEquals(2 + offset, plan.getContext().getScanRanges().getBoundPkColumnCount());
+        plan = stmt.compileQuery("select * from my_table_mt_view where (pkcol1, pkcol2, pkcol3) < ('0', '0', '0')");
+        assertEquals(4 + offset, plan.getContext().getScanRanges().getBoundPkColumnCount());
+        plan = stmt.compileQuery("select * from my_table_mt_view where (pkcol1, pkcol2, pkcol3) < ('9', '9', '9') and (pkcol1, pkcol2) > ('0', '0')");
+        assertEquals(4 + offset, plan.getContext().getScanRanges().getBoundPkColumnCount());
+        plan = stmt.compileQuery("select * from my_table_mt_view where pkcol1 = 'a' and pkcol2 = 'b' and pkcol3 = 'c' and (pkcol1, pkcol2) < ('z', 'z')");
+        assertEquals(4 + offset, plan.getContext().getScanRanges().getBoundPkColumnCount());
+        // TODO: in theory pkcol2 and pkcol3 could be bound, but we don't have the logic for that yet
+        plan = stmt.compileQuery("select * from my_table_mt_view where (pkcol2, pkcol3) > ('0', '0') and pkcol1 = '000000000000000'");
+        assertEquals(2 + offset, plan.getContext().getScanRanges().getBoundPkColumnCount());
+    }
+
     private void assertPlanDetails(PreparedStatement stmt, String expectedPkCols, String expectedPkColsDataTypes, boolean expectedHasOrderBy, int expectedLimit) throws SQLException {
         Connection conn = stmt.getConnection();
         QueryPlan plan = PhoenixRuntime.getOptimizedQueryPlan(stmt);
         
-        List<Pair<String, String>> columns = new ArrayList<Pair<String, String>>();
-        PhoenixRuntime.getPkColsForSql(columns, plan, conn, true);
+        List<Pair<String, String>> columns = PhoenixRuntime.getPkColsForSql(conn, plan);
         assertEquals(expectedPkCols, Joiner.on(",").join(getColumnNames(columns)));
         List<String> dataTypes = new ArrayList<String>();
         columns = new ArrayList<Pair<String,String>>();
@@ -667,4 +759,47 @@ public class QueryOptimizerTest extends BaseConnectionlessQueryTest {
         return Joiner.on(",").join(pkColsDataTypes);
     }
     
+    @Test
+    public void testMinMaxQualifierRangeWithOrderByOnKVColumn() throws Exception {
+        Connection conn = DriverManager.getConnection(getUrl());
+        String tableName = "testMintestMinMaxQualifierRange".toUpperCase();
+        conn.createStatement().execute("CREATE TABLE " + tableName + " (k INTEGER NOT NULL PRIMARY KEY, v1 INTEGER, v2 VARCHAR) COLUMN_ENCODED_BYTES=4");
+        PhoenixStatement stmt = conn.createStatement().unwrap(PhoenixStatement.class);
+        ResultSet rs = stmt.executeQuery("SELECT K from " + tableName + " ORDER BY (v1)");
+        assertQualifierRanges(rs, ENCODED_EMPTY_COLUMN_NAME, ENCODED_CQ_COUNTER_INITIAL_VALUE);
+        rs = stmt.executeQuery("SELECT K from " + tableName + " ORDER BY (v1, v2)");
+        assertQualifierRanges(rs, ENCODED_EMPTY_COLUMN_NAME, ENCODED_CQ_COUNTER_INITIAL_VALUE + 1);
+        rs = stmt.executeQuery("SELECT V2 from " + tableName + " ORDER BY (v1)");
+        assertQualifierRanges(rs, ENCODED_EMPTY_COLUMN_NAME, ENCODED_CQ_COUNTER_INITIAL_VALUE + 1);
+        rs = stmt.executeQuery("SELECT V1 from " + tableName + " ORDER BY (v1, v2)");
+        assertQualifierRanges(rs, ENCODED_EMPTY_COLUMN_NAME, ENCODED_CQ_COUNTER_INITIAL_VALUE + 1);
+    }
+    
+    @Test
+    public void testMinMaxQualifierRangeWithNoOrderBy() throws Exception {
+        Connection conn = DriverManager.getConnection(getUrl());
+        String tableName = "testMintestMinMaxQualifierRange".toUpperCase();
+        conn.createStatement().execute("CREATE TABLE " + tableName + " (k INTEGER NOT NULL PRIMARY KEY, v1 INTEGER, v2 VARCHAR) COLUMN_ENCODED_BYTES=4");
+        PhoenixStatement stmt = conn.createStatement().unwrap(PhoenixStatement.class);
+        ResultSet rs = stmt.executeQuery("SELECT K from " + tableName);
+        assertQualifierRangesNotPresent(rs);
+        rs = stmt.executeQuery("SELECT V2 from " + tableName);
+        assertQualifierRanges(rs, ENCODED_EMPTY_COLUMN_NAME, ENCODED_CQ_COUNTER_INITIAL_VALUE + 1);
+        rs = stmt.executeQuery("SELECT V1 from " + tableName);
+        assertQualifierRanges(rs, ENCODED_EMPTY_COLUMN_NAME, ENCODED_CQ_COUNTER_INITIAL_VALUE);
+    }
+    
+    private static void assertQualifierRanges(ResultSet rs, int minQualifier, int maxQualifier) throws SQLException {
+        Scan scan = rs.unwrap(PhoenixResultSet.class).getStatement().getQueryPlan().getContext().getScan();
+        assertNotNull(scan.getAttribute(MIN_QUALIFIER));
+        assertNotNull(scan.getAttribute(MAX_QUALIFIER));
+        assertEquals(minQualifier, Bytes.toInt(scan.getAttribute(MIN_QUALIFIER)));
+        assertEquals(maxQualifier, Bytes.toInt(scan.getAttribute(MAX_QUALIFIER)));
+    }
+    
+    private static void assertQualifierRangesNotPresent(ResultSet rs) throws SQLException {
+        Scan scan = rs.unwrap(PhoenixResultSet.class).getStatement().getQueryPlan().getContext().getScan();
+        assertNull(scan.getAttribute(MIN_QUALIFIER));
+        assertNull(scan.getAttribute(MAX_QUALIFIER));
+    }
 }

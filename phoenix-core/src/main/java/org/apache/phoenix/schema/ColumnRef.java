@@ -17,11 +17,27 @@
  */
 package org.apache.phoenix.schema;
 
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.util.Arrays;
+
+import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.http.annotation.Immutable;
-import org.apache.phoenix.expression.ColumnExpression;
+import org.apache.phoenix.compile.ExpressionCompiler;
+import org.apache.phoenix.compile.StatementContext;
+import org.apache.phoenix.expression.Expression;
 import org.apache.phoenix.expression.KeyValueColumnExpression;
 import org.apache.phoenix.expression.ProjectedColumnExpression;
 import org.apache.phoenix.expression.RowKeyColumnExpression;
+import org.apache.phoenix.expression.SingleCellColumnExpression;
+import org.apache.phoenix.expression.function.DefaultValueExpression;
+import org.apache.phoenix.jdbc.PhoenixConnection;
+import org.apache.phoenix.jdbc.PhoenixStatement;
+import org.apache.phoenix.parse.ParseNode;
+import org.apache.phoenix.parse.SQLParser;
+import org.apache.phoenix.schema.PTable.ImmutableStorageScheme;
+import org.apache.phoenix.util.ExpressionUtil;
+import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.SchemaUtil;
 
 
@@ -45,7 +61,7 @@ public class ColumnRef {
     }
 
     public ColumnRef(TableRef tableRef, String familyName, String columnName) throws MetaDataEntityNotFoundException {
-        this(tableRef, tableRef.getTable().getColumnFamily(familyName).getColumn(columnName).getPosition());
+        this(tableRef, tableRef.getTable().getColumnFamily(familyName).getPColumnForColumnName(columnName).getPosition());
     }
 
     public ColumnRef(TableRef tableRef, int columnPosition) {
@@ -89,12 +105,12 @@ public class ColumnRef {
         if (!tableRef.equals(other.tableRef)) return false;
         return true;
     }
-    
-    public ColumnExpression newColumnExpression() {
+
+    public Expression newColumnExpression() throws SQLException {
         return newColumnExpression(false, false);
     }
 
-    public ColumnExpression newColumnExpression(boolean schemaNameCaseSensitive, boolean colNameCaseSensitive) {
+    public Expression newColumnExpression(boolean schemaNameCaseSensitive, boolean colNameCaseSensitive) throws SQLException {
         PTable table = tableRef.getTable();
         PColumn column = this.getColumn();
         String displayName = tableRef.getColumnDisplayName(this, schemaNameCaseSensitive, colNameCaseSensitive);
@@ -108,8 +124,26 @@ public class ColumnRef {
         if (table.getType() == PTableType.PROJECTED || table.getType() == PTableType.SUBQUERY) {
         	return new ProjectedColumnExpression(column, table, displayName);
         }
-       
-        return new KeyValueColumnExpression(column, displayName);
+
+        Expression expression = table.getImmutableStorageScheme() == ImmutableStorageScheme.SINGLE_CELL_ARRAY_WITH_OFFSETS ? 
+        		new SingleCellColumnExpression(column, displayName, table.getEncodingScheme()) : new KeyValueColumnExpression(column, displayName);
+
+        if (column.getExpressionStr() != null) {
+            String url = PhoenixRuntime.JDBC_PROTOCOL
+                    + PhoenixRuntime.JDBC_PROTOCOL_SEPARATOR
+                    + PhoenixRuntime.CONNECTIONLESS;
+            PhoenixConnection conn =
+                    DriverManager.getConnection(url).unwrap(PhoenixConnection.class);
+            StatementContext context = new StatementContext(new PhoenixStatement(conn));
+
+            ExpressionCompiler compiler = new ExpressionCompiler(context);
+            ParseNode defaultParseNode = new SQLParser(column.getExpressionStr()).parseExpression();
+            Expression defaultExpression = defaultParseNode.accept(compiler);
+            if (!ExpressionUtil.isNull(defaultExpression, new ImmutableBytesWritable())) {
+                return new DefaultValueExpression(Arrays.asList(expression, defaultExpression));
+            }
+        }
+        return expression;
     }
 
     public ColumnRef cloneAtTimestamp(long timestamp) {

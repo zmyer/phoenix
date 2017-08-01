@@ -17,6 +17,7 @@
  */
 package org.apache.phoenix.mapreduce;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -49,6 +50,7 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.util.Tool;
+import org.apache.phoenix.index.IndexMaintainer;
 import org.apache.phoenix.jdbc.PhoenixConnection;
 import org.apache.phoenix.jdbc.PhoenixDatabaseMetaData;
 import org.apache.phoenix.jdbc.PhoenixDriver;
@@ -57,7 +59,9 @@ import org.apache.phoenix.mapreduce.bulkload.TargetTableRef;
 import org.apache.phoenix.mapreduce.bulkload.TargetTableRefFunctions;
 import org.apache.phoenix.query.QueryConstants;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTable.IndexType;
 import org.apache.phoenix.util.ColumnInfo;
+import org.apache.phoenix.util.IndexUtil;
 import org.apache.phoenix.util.MetaDataUtil;
 import org.apache.phoenix.util.PhoenixRuntime;
 import org.apache.phoenix.util.QueryUtil;
@@ -183,10 +187,10 @@ public abstract class AbstractBulkLoadTool extends Configured implements Tool {
         String tableName = cmdLine.getOptionValue(TABLE_NAME_OPT.getOpt());
         String schemaName = cmdLine.getOptionValue(SCHEMA_NAME_OPT.getOpt());
         String indexTableName = cmdLine.getOptionValue(INDEX_TABLE_NAME_OPT.getOpt());
-        String qualifiedTableName = getQualifiedTableName(schemaName, tableName);
+        String qualifiedTableName = SchemaUtil.getQualifiedTableName(schemaName, tableName);
         String qualifiedIndexTableName = null;
         if (indexTableName != null){
-            qualifiedIndexTableName = getQualifiedTableName(schemaName, indexTableName);
+            qualifiedIndexTableName = SchemaUtil.getQualifiedTableName(schemaName, indexTableName);
         }
 
         if (cmdLine.hasOption(ZK_QUORUM_OPT.getOpt())) {
@@ -234,6 +238,15 @@ public abstract class AbstractBulkLoadTool extends Configured implements Tool {
         List<TargetTableRef> tablesToBeLoaded = new ArrayList<TargetTableRef>();
         PTable table = PhoenixRuntime.getTable(conn, qualifiedTableName);
         tablesToBeLoaded.add(new TargetTableRef(qualifiedTableName, table.getPhysicalName().getString()));
+        boolean hasLocalIndexes = false;
+        for(PTable index: table.getIndexes()) {
+            if (index.getIndexType() == IndexType.LOCAL) {
+                hasLocalIndexes =
+                        qualifiedIndexTableName == null ? true : index.getTableName().getString()
+                                .equals(qualifiedIndexTableName);
+                if (hasLocalIndexes) break;
+            }
+        }
         // using conn after it's been closed... o.O
         tablesToBeLoaded.addAll(getIndexTables(conn, schemaName, qualifiedTableName));
 
@@ -254,7 +267,7 @@ public abstract class AbstractBulkLoadTool extends Configured implements Tool {
             tablesToBeLoaded.add(targetIndexRef);
         }
 
-        return submitJob(conf, tableName, inputPaths, outputPath, tablesToBeLoaded);
+        return submitJob(conf, tableName, inputPaths, outputPath, tablesToBeLoaded, hasLocalIndexes);
     }
 
     /**
@@ -263,7 +276,7 @@ public abstract class AbstractBulkLoadTool extends Configured implements Tool {
      * @throws Exception 
      */
     public int submitJob(final Configuration conf, final String qualifiedTableName,
-        final String inputPaths, final Path outputPath, List<TargetTableRef> tablesToBeLoaded) throws Exception {
+        final String inputPaths, final Path outputPath, List<TargetTableRef> tablesToBeLoaded, boolean hasLocalIndexes) throws Exception {
        
         Job job = Job.getInstance(conf, "Phoenix MapReduce import for " + qualifiedTableName);
         FileInputFormat.addInputPaths(job, inputPaths);
@@ -275,7 +288,16 @@ public abstract class AbstractBulkLoadTool extends Configured implements Tool {
         job.setOutputKeyClass(TableRowkeyPair.class);
         job.setOutputValueClass(KeyValue.class);
         job.setReducerClass(FormatToKeyValueReducer.class);
-
+        byte[][] splitKeysBeforeJob = null;
+        HTable table = null;
+        if(hasLocalIndexes) {
+            try{
+                table = new HTable(job.getConfiguration(), qualifiedTableName);
+                splitKeysBeforeJob = table.getRegionLocator().getStartKeys();
+            } finally {
+                if(table != null )table.close();
+            }
+        }
         MultiHfileOutputFormat.configureIncrementalLoad(job, tablesToBeLoaded);
 
         final String tableNamesAsJson = TargetTableRefFunctions.NAMES_TO_JSON.apply(tablesToBeLoaded);
@@ -291,10 +313,25 @@ public abstract class AbstractBulkLoadTool extends Configured implements Tool {
         boolean success = job.waitForCompletion(true);
 
         if (success) {
+            if (hasLocalIndexes) {
+                try {
+                    table = new HTable(job.getConfiguration(), qualifiedTableName);
+                    if(!IndexUtil.matchingSplitKeys(splitKeysBeforeJob, table.getRegionLocator().getStartKeys())) {
+                        LOG.error("The table "
+                                + qualifiedTableName
+                                + " has local indexes and there is split key mismatch before and"
+                                + " after running bulkload job. Please rerun the job otherwise"
+                                + " there may be inconsistencies between actual data and index data.");
+                        return -1;
+                    }
+                } finally {
+                    if (table != null) table.close();
+                }
+            }
             LOG.info("Loading HFiles from {}", outputPath);
             completebulkload(conf,outputPath,tablesToBeLoaded);
             LOG.info("Removing output directory {}", outputPath);
-            if(!FileSystem.get(conf).delete(outputPath, true)) {
+            if(!outputPath.getFileSystem(conf).delete(outputPath, true)) {
                 LOG.error("Failed to delete the output directory {}", outputPath);
             }
             return 0;
@@ -342,23 +379,6 @@ public abstract class AbstractBulkLoadTool extends Configured implements Tool {
     }
 
     /**
-     * Calculate the HBase HTable name for which the import is to be done.
-     *
-     * @param schemaName import schema name, can be null
-     * @param tableName import table name
-     * @return the byte representation of the import HTable
-     */
-    @VisibleForTesting
-    static String getQualifiedTableName(String schemaName, String tableName) {
-        if (schemaName != null) {
-            return String.format("%s.%s", SchemaUtil.normalizeIdentifier(schemaName),
-                    SchemaUtil.normalizeIdentifier(tableName));
-        } else {
-            return SchemaUtil.normalizeIdentifier(tableName);
-        }
-    }
-
-    /**
      * Perform any required validation on the table being bulk loaded into:
      * - ensure no column family names start with '_', as they'd be ignored leading to problems.
      * @throws java.sql.SQLException
@@ -395,13 +415,8 @@ public abstract class AbstractBulkLoadTool extends Configured implements Tool {
         PTable table = PhoenixRuntime.getTable(conn, qualifiedTableName);
         List<TargetTableRef> indexTables = new ArrayList<TargetTableRef>();
         for(PTable indexTable : table.getIndexes()){
-            if (indexTable.getIndexType() == PTable.IndexType.LOCAL) {
-                indexTables.add(new TargetTableRef(indexTable.getName().getString(),
-                        Bytes.toString(MetaDataUtil.getLocalIndexPhysicalName(table.getPhysicalName().getBytes()))));
-            } else {
-                indexTables.add(
-                        new TargetTableRef(indexTable.getName().getString(), indexTable.getPhysicalName().getString()));
-            }
+            indexTables.add(new TargetTableRef(indexTable.getName().getString(), indexTable
+                    .getPhysicalName().getString()));
         }
         return indexTables;
     }

@@ -46,12 +46,14 @@ import org.apache.phoenix.expression.function.ConvertTimezoneFunction;
 import org.apache.phoenix.expression.function.CountAggregateFunction;
 import org.apache.phoenix.expression.function.DayOfMonthFunction;
 import org.apache.phoenix.expression.function.DecodeFunction;
+import org.apache.phoenix.expression.function.DefaultValueExpression;
 import org.apache.phoenix.expression.function.DistinctCountAggregateFunction;
 import org.apache.phoenix.expression.function.DistinctValueAggregateFunction;
 import org.apache.phoenix.expression.function.EncodeFunction;
 import org.apache.phoenix.expression.function.ExpFunction;
 import org.apache.phoenix.expression.function.ExternalSqlTypeIdFunction;
 import org.apache.phoenix.expression.function.FirstValueFunction;
+import org.apache.phoenix.expression.function.FirstValuesFunction;
 import org.apache.phoenix.expression.function.FloorDateExpression;
 import org.apache.phoenix.expression.function.FloorDecimalExpression;
 import org.apache.phoenix.expression.function.FloorFunction;
@@ -66,6 +68,7 @@ import org.apache.phoenix.expression.function.InstrFunction;
 import org.apache.phoenix.expression.function.InvertFunction;
 import org.apache.phoenix.expression.function.LTrimFunction;
 import org.apache.phoenix.expression.function.LastValueFunction;
+import org.apache.phoenix.expression.function.LastValuesFunction;
 import org.apache.phoenix.expression.function.LengthFunction;
 import org.apache.phoenix.expression.function.LnFunction;
 import org.apache.phoenix.expression.function.LogFunction;
@@ -125,6 +128,8 @@ import org.apache.phoenix.expression.function.UDFExpression;
 import org.apache.phoenix.expression.function.UpperFunction;
 import org.apache.phoenix.expression.function.WeekFunction;
 import org.apache.phoenix.expression.function.YearFunction;
+import org.apache.phoenix.expression.function.DayOfWeekFunction;
+import org.apache.phoenix.expression.function.DayOfYearFunction;
 
 import com.google.common.collect.Maps;
 
@@ -281,8 +286,13 @@ public enum ExpressionType {
     FloorYearExpression(FloorYearExpression.class),
     CeilWeekExpression(CeilWeekExpression.class),
     CeilMonthExpression(CeilMonthExpression.class),
-    CeilYearExpression(CeilYearExpression.class);
-    ;
+    CeilYearExpression(CeilYearExpression.class),
+    DayOfWeekFunction(DayOfWeekFunction.class),
+    DayOfYearFunction(DayOfYearFunction.class),
+    DefaultValueExpression(DefaultValueExpression.class),
+    ArrayColumnExpression(SingleCellColumnExpression.class),
+    FirstValuesFunction(FirstValuesFunction.class),
+    LastValuesFunction(LastValuesFunction.class);
 
     ExpressionType(Class<? extends Expression> clazz) {
         this.clazz = clazz;

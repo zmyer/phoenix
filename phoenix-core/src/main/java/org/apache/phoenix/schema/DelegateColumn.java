@@ -89,4 +89,18 @@ public class DelegateColumn extends DelegateDatum implements PColumn {
 	public boolean isDynamic() {
 		return getDelegate().isDynamic();
 	}
+
+	@Override
+	public int hashCode() {
+	    return getDelegate().hashCode();
+	}
+	
+	@Override
+    public boolean equals(Object o) {
+	    return getDelegate().equals(o);
+	}
+    @Override
+    public byte[] getColumnQualifierBytes() {
+        return getDelegate().getColumnQualifierBytes();
+    }
 }

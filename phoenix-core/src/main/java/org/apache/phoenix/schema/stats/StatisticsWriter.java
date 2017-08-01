@@ -78,10 +78,6 @@ public class StatisticsWriter implements Closeable {
         HTableInterface statsReaderTable = ServerUtil.getHTableForCoprocessorScan(env, statsWriterTable);
         StatisticsWriter statsTable = new StatisticsWriter(statsReaderTable, statsWriterTable, tableName,
                 clientTimeStamp);
-        if (clientTimeStamp != DefaultStatisticsCollector.NO_TIMESTAMP) { // Otherwise we do this later as we don't know the ts
-                                                                   // yet
-            statsTable.commitLastStatsUpdatedTime();
-        }
         return statsTable;
     }
 
@@ -139,8 +135,8 @@ public class StatisticsWriter implements Closeable {
         }
         GuidePostsInfo gps = tracker.getGuidePosts(cfKey);
         if (gps != null) {
-            List<Long> byteCounts = gps.getByteCounts();
-            List<Long> rowCounts = gps.getRowCounts();
+            long[] byteCounts = gps.getByteCounts();
+            long[] rowCounts = gps.getRowCounts();
             ImmutableBytesWritable keys = gps.getGuidePosts();
             boolean hasGuidePosts = keys.getLength() > 0;
             if (hasGuidePosts) {
@@ -150,7 +146,7 @@ public class StatisticsWriter implements Closeable {
                     PrefixByteDecoder decoder = new PrefixByteDecoder(gps.getMaxLength());
                     do {
                         ImmutableBytesWritable ptr = decoder.decode(input);
-                        addGuidepost(cfKey, mutations, ptr, byteCounts.get(guidePostCount), rowCounts.get(guidePostCount), timeStamp);
+                        addGuidepost(cfKey, mutations, ptr, byteCounts[guidePostCount], rowCounts[guidePostCount], timeStamp);
                         guidePostCount++;
                     } while (decoder != null);
                 } catch (EOFException e) { // Ignore as this signifies we're done
@@ -193,7 +189,8 @@ public class StatisticsWriter implements Closeable {
         }
     }
 
-    public void commitStats(List<Mutation> mutations) throws IOException {
+    public void commitStats(List<Mutation> mutations, StatisticsCollector statsCollector) throws IOException {
+        commitLastStatsUpdatedTime(statsCollector);
         if (mutations.size() > 0) {
             byte[] row = mutations.get(0).getRow();
             MutateRowsRequest.Builder mrmBuilder = MutateRowsRequest.newBuilder();
@@ -220,10 +217,9 @@ public class StatisticsWriter implements Closeable {
         return put;
     }
 
-    private void commitLastStatsUpdatedTime() throws IOException {
-        // Always use wallclock time for this, as it's a mechanism to prevent
-        // stats from being collected too often.
-        Put put = getLastStatsUpdatedTimePut(clientTimeStamp);
+    private void commitLastStatsUpdatedTime(StatisticsCollector statsCollector) throws IOException {
+        long timeStamp = clientTimeStamp == StatisticsCollector.NO_TIMESTAMP ? statsCollector.getMaxTimeStamp() : clientTimeStamp;
+        Put put = getLastStatsUpdatedTimePut(timeStamp);
         statsWriterTable.put(put);
     }
 

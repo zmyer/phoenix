@@ -1,9 +1,7 @@
 /*
- * Copyright 2010 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
- *distributed with this work for additional information
+ * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
  * to you under the Apache License, Version 2.0 (the
  * "License"); you maynot use this file except in compliance
@@ -62,18 +60,18 @@ import com.google.common.collect.Lists;
 @RunWith(Parameterized.class)
 public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
 
-    public ClientTimeArithmeticQueryIT(String indexDDL) {
-        super(indexDDL);
+    public ClientTimeArithmeticQueryIT(String indexDDL, boolean mutable, boolean columnEncoded) {
+        super(indexDDL, mutable, columnEncoded, false);
     }
     
-    @Parameters(name="{0}")
+    @Parameters(name="ClientTimeArithmeticQueryIT_{index}") // name is used by failsafe as file name in reports
     public static Collection<Object> data() {
         return QueryIT.data();
     }
     
     @Test
     public void testDateAdd() throws Exception {
-        String query = "SELECT entity_id, b_string FROM ATABLE WHERE a_date + CAST(0.5 AS DOUBLE) < ?";
+        String query = "SELECT entity_id, b_string FROM " + tableName + " WHERE a_date + CAST(0.5 AS DOUBLE) < ?";
         String url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 5); // Run query at timestamp 5
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(url, props);
@@ -94,7 +92,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testDecimalAddExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER + X_DECIMAL > 11";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER + X_DECIMAL > 11";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -113,7 +111,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testDoubleAddExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where a_double + a_float > 0.08";
+        String query = "SELECT entity_id FROM " + tableName + " where a_double + a_float > 0.08";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -132,7 +130,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testUnsignedDoubleAddExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where a_unsigned_double + a_unsigned_float > 0.08";
+        String query = "SELECT entity_id FROM " + tableName + " where a_unsigned_double + a_unsigned_float > 0.08";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -155,11 +153,11 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     @Test
     public void testValidArithmetic() throws Exception {
         String[] queries = new String[] { 
-                "SELECT entity_id,organization_id FROM atable where (A_DATE - A_DATE) * 5 < 0",
-                "SELECT entity_id,organization_id FROM atable where 1 + A_DATE  < A_DATE",
-                "SELECT entity_id,organization_id FROM atable where A_DATE - 1 < A_DATE",
-                "SELECT entity_id,organization_id FROM atable where A_INTEGER - 45 < 0",
-                "SELECT entity_id,organization_id FROM atable where X_DECIMAL / 45 < 0", };
+                "SELECT entity_id,organization_id FROM " + tableName + " where (A_DATE - A_DATE) * 5 < 0",
+                "SELECT entity_id,organization_id FROM " + tableName + " where 1 + A_DATE  < A_DATE",
+                "SELECT entity_id,organization_id FROM " + tableName + " where A_DATE - 1 < A_DATE",
+                "SELECT entity_id,organization_id FROM " + tableName + " where A_INTEGER - 45 < 0",
+                "SELECT entity_id,organization_id FROM " + tableName + " where X_DECIMAL / 45 < 0", };
 
         for (String query : queries) {
             Properties props = new Properties();
@@ -177,7 +175,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testIntSubtractionExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER - 4  <= 0";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER - 4  <= 0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -191,7 +189,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     }
     @Test
     public void testDecimalSubtraction1Expression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER - 3.5  <= 0";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER - 3.5  <= 0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -205,7 +203,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     }
     @Test
     public void testDecimalSubtraction2Expression() throws Exception {// check if decimal part makes a difference
-        String query = "SELECT entity_id FROM aTable where X_DECIMAL - 3.5  > 0";
+        String query = "SELECT entity_id FROM " + tableName + " where X_DECIMAL - 3.5  > 0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -221,7 +219,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     }
     @Test
     public void testLongSubtractionExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where X_LONG - 1  < 0";
+        String query = "SELECT entity_id FROM " + tableName + " where X_LONG - 1  < 0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -237,7 +235,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     }
     @Test
     public void testDoubleSubtractionExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where a_double - CAST(0.0002 AS DOUBLE)  < 0";
+        String query = "SELECT entity_id FROM " + tableName + " where a_double - CAST(0.0002 AS DOUBLE)  < 0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -253,7 +251,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     }
     @Test
     public void testSmallIntSubtractionExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where a_short - 129  = 0";
+        String query = "SELECT entity_id FROM " + tableName + " where a_short - 129  = 0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -270,7 +268,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testTernarySubtractionExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where  X_INTEGER - X_LONG - 10  < 0";
+        String query = "SELECT entity_id FROM " + tableName + " where  X_INTEGER - X_LONG - 10  < 0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -288,7 +286,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     }
     @Test
     public void testSelectWithSubtractionExpression() throws Exception {
-        String query = "SELECT entity_id, x_integer - 4 FROM aTable where  x_integer - 4 = 0";
+        String query = "SELECT entity_id, x_integer - 4 FROM " + tableName + " where  x_integer - 4 = 0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -305,7 +303,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     }
     @Test
     public void testConstantSubtractionExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER = 5 - 1 - 2";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER = 5 - 1 - 2";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -322,7 +320,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testIntDivideExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER / 3 > 2";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER / 3 > 2";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -339,7 +337,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testDoubleDivideExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where a_double / CAST(3.0 AS DOUBLE) = 0.0003";
+        String query = "SELECT entity_id FROM " + tableName + " where a_double / CAST(3.0 AS DOUBLE) = 0.0003";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -356,7 +354,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testSmallIntDivideExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where a_short / 135 = 1";
+        String query = "SELECT entity_id FROM " + tableName + " where a_short / 135 = 1";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -373,7 +371,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testIntToDecimalDivideExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER / 3.0 > 2";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER / 3.0 > 2";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -388,7 +386,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testConstantDivideExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER = 9 / 3 / 3";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER = 9 / 3 / 3";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -404,7 +402,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     }
     @Test
     public void testSelectWithDivideExpression() throws Exception {
-        String query = "SELECT entity_id, a_integer/3 FROM aTable where  a_integer = 9";
+        String query = "SELECT entity_id, a_integer/3 FROM " + tableName + " where  a_integer = 9";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -422,7 +420,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testNegateExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER - 4 = -1";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER - 4 = -1";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -439,7 +437,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testIntMultiplyExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER * 2 = 16";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER * 2 = 16";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -456,7 +454,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testDoubleMultiplyExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_DOUBLE * CAST(2.0 AS DOUBLE) = 0.0002";
+        String query = "SELECT entity_id FROM " + tableName + " where A_DOUBLE * CAST(2.0 AS DOUBLE) = 0.0002";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -473,7 +471,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
 
     @Test
     public void testLongMultiplyExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where X_LONG * 2 * 2 = 20";
+        String query = "SELECT entity_id FROM " + tableName + " where X_LONG * 2 * 2 = 20";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -490,7 +488,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
 
     @Test
     public void testIntToDecimalMultiplyExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER * 1.5 > 9";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER * 1.5 > 9";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -506,7 +504,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
 
     @Test
     public void testDecimalMultiplyExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where X_DECIMAL * A_INTEGER > 29.5";
+        String query = "SELECT entity_id FROM " + tableName + " where X_DECIMAL * A_INTEGER > 29.5";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -521,7 +519,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testIntAddExpression() throws Exception {
-        String query = "SELECT entity_id FROM aTable where A_INTEGER + 2 = 4";
+        String query = "SELECT entity_id FROM " + tableName + " where A_INTEGER + 2 = 4";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 2)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
@@ -538,11 +536,11 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testCoalesceFunction() throws Exception {
-        String query = "SELECT entity_id FROM aTable WHERE coalesce(X_DECIMAL,0.0) = 0.0";
+        String query = "SELECT entity_id FROM " + tableName + " WHERE coalesce(X_DECIMAL,0.0) = 0.0";
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10)); // Execute at timestamp 2
         Connection conn = DriverManager.getConnection(getUrl(), props);
-        PreparedStatement stmt = conn.prepareStatement("UPSERT INTO aTable(organization_id,entity_id,x_decimal) values(?,?,?)");
+        PreparedStatement stmt = conn.prepareStatement("UPSERT INTO  " + tableName + " (organization_id,entity_id,x_decimal) values(?,?,?)");
         stmt.setString(1, getOrganizationId());
         stmt.setString(2, ROW1);
         stmt.setBigDecimal(3, BigDecimal.valueOf(1.0));
@@ -578,7 +576,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
     
     @Test
     public void testDateSubtract() throws Exception {
-        String query = "SELECT entity_id, b_string FROM ATABLE WHERE a_date - CAST(0.5 AS DOUBLE) > ?";
+        String query = "SELECT entity_id, b_string FROM " + tableName + " WHERE a_date - CAST(0.5 AS DOUBLE) > ?";
         String url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 5); // Run query at timestamp 5
         Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
         Connection conn = DriverManager.getConnection(url, props);
@@ -604,7 +602,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
         
         url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 15);
         Connection conn = DriverManager.getConnection(url, props);
-        PreparedStatement statement = conn.prepareStatement("UPSERT INTO ATABLE(organization_id,entity_id,a_time) VALUES(?,?,?)");
+        PreparedStatement statement = conn.prepareStatement("UPSERT INTO  " + tableName + " (organization_id,entity_id,a_time) VALUES(?,?,?)");
         statement.setString(1, getOrganizationId());
         statement.setString(2, ROW2);
         statement.setDate(3, date);
@@ -627,7 +625,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
         url = getUrl() + ";" + PhoenixRuntime.CURRENT_SCN_ATTRIB + "=" + (ts + 25);
         conn = DriverManager.getConnection(url, props);
         try {
-            statement = conn.prepareStatement("SELECT entity_id, b_string FROM ATABLE WHERE a_date - a_time > 1");
+            statement = conn.prepareStatement("SELECT entity_id, b_string FROM " + tableName + " WHERE a_date - a_time > 1");
             ResultSet rs = statement.executeQuery();
             @SuppressWarnings("unchecked")
             List<List<Object>> expectedResults = Lists.newArrayList(
@@ -645,6 +643,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
       Connection conn;
       PreparedStatement stmt;
       ResultSet rs;
+      String tName = generateUniqueName();
 
       long ts = nextTimestamp();
       Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
@@ -652,23 +651,23 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
       conn = DriverManager.getConnection(getUrl(), props);
       conn.createStatement()
               .execute(
-                      "create table timestamp_table (ts timestamp primary key)");
+                      "create table " + tName + " (ts timestamp primary key)");
       conn.close();
 
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
       conn = DriverManager.getConnection(getUrl(), props);
-      stmt = conn.prepareStatement("upsert into timestamp_table values (?)");
+      stmt = conn.prepareStatement("upsert into " + tName + " values (?)");
       stmt.setTimestamp(1, new Timestamp(1995 - 1900, 4, 2, 1, 1, 1, 1));
       stmt.execute();
       conn.commit();
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 60));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts FROM timestamp_table");
+      rs = conn.createStatement().executeQuery("SELECT ts FROM " + tName + "");
       assertTrue(rs.next());
       assertEquals("1995-05-02 01:01:01.000000001",rs.getTimestamp(1).toString());
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 70));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts + 1 FROM timestamp_table");
+      rs = conn.createStatement().executeQuery("SELECT ts + 1 FROM " + tName + "");
       assertTrue(rs.next());
       assertEquals("1995-05-03 01:01:01.000000001",rs.getTimestamp(1).toString());
     }
@@ -678,30 +677,30 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
       Connection conn;
       PreparedStatement stmt;
       ResultSet rs;
-
+      String tName = generateUniqueName();
       long ts = nextTimestamp();
       Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10));
       conn = DriverManager.getConnection(getUrl(), props);
       conn.createStatement()
               .execute(
-                      "create table timestamp_table (ts timestamp primary key)");
+                      "create table " + tName + " (ts timestamp primary key)");
       conn.close();
 
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
       conn = DriverManager.getConnection(getUrl(), props);
-      stmt = conn.prepareStatement("upsert into timestamp_table values (?)");
+      stmt = conn.prepareStatement("upsert into " + tName + " values (?)");
       stmt.setTimestamp(1, new Timestamp(1995 - 1900, 4, 2, 1, 1, 1, 1));
       stmt.execute();
       conn.commit();
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 60));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts FROM timestamp_table");
+      rs = conn.createStatement().executeQuery("SELECT ts FROM " + tName);
       assertTrue(rs.next());
       assertEquals("1995-05-02 01:01:01.000000001",rs.getTimestamp(1).toString());
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 70));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts - 1 FROM timestamp_table");
+      rs = conn.createStatement().executeQuery("SELECT ts - 1 FROM " + tName);
       assertTrue(rs.next());
       assertEquals("1995-05-01 01:01:01.000000001",rs.getTimestamp(1).toString());
     }
@@ -711,6 +710,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
       Connection conn;
       PreparedStatement stmt;
       ResultSet rs;
+      String tName = generateUniqueName();
 
       long ts = nextTimestamp();
       Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
@@ -718,24 +718,24 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
       conn = DriverManager.getConnection(getUrl(), props);
       conn.createStatement()
               .execute(
-                      "create table time_table (ts time primary key)");
+                      "create table " + tName + " (ts time primary key)");
       conn.close();
 
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
       conn = DriverManager.getConnection(getUrl(), props);
-      stmt = conn.prepareStatement("upsert into time_table values (?)");
+      stmt = conn.prepareStatement("upsert into " + tName + " values (?)");
       Time time = new Time(1995 - 1900, 4, 2);
       stmt.setTime(1, time);
       stmt.execute();
       conn.commit();
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 60));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts FROM time_table");
+      rs = conn.createStatement().executeQuery("SELECT ts FROM " + tName);
       assertTrue(rs.next());
       assertEquals(time.getTime(),rs.getTimestamp(1).getTime());
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 70));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts + 1 FROM time_table");
+      rs = conn.createStatement().executeQuery("SELECT ts + 1 FROM " + tName);
       assertTrue(rs.next());
       assertEquals(time.getTime() + MILLIS_IN_DAY,rs.getTimestamp(1).getTime());
     }
@@ -745,31 +745,31 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
       Connection conn;
       PreparedStatement stmt;
       ResultSet rs;
-
+      String tName = generateUniqueName();
       long ts = nextTimestamp();
       Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 10));
       conn = DriverManager.getConnection(getUrl(), props);
       conn.createStatement()
               .execute(
-                      "create table time_table (ts time primary key)");
+                      "create table " + tName + " (ts time primary key)");
       conn.close();
 
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
       conn = DriverManager.getConnection(getUrl(), props);
-      stmt = conn.prepareStatement("upsert into time_table values (?)");
+      stmt = conn.prepareStatement("upsert into " + tName + " values (?)");
       Time time = new Time(1995 - 1900, 4, 2);
       stmt.setTime(1, time);
       stmt.execute();
       conn.commit();
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 60));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts FROM time_table");
+      rs = conn.createStatement().executeQuery("SELECT ts FROM " + tName + "");
       assertTrue(rs.next());
       assertEquals(time.getTime(),rs.getTimestamp(1).getTime());
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 70));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts - 1 FROM time_table");
+      rs = conn.createStatement().executeQuery("SELECT ts - 1 FROM " + tName);
       assertTrue(rs.next());
       assertEquals(time.getTime() - MILLIS_IN_DAY,rs.getTimestamp(1).getTime());
     }
@@ -779,6 +779,7 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
       Connection conn;
       PreparedStatement stmt;
       ResultSet rs;
+      String tName = generateUniqueName();
 
       long ts = nextTimestamp();
       Properties props = PropertiesUtil.deepCopy(TEST_PROPERTIES);
@@ -786,23 +787,23 @@ public class ClientTimeArithmeticQueryIT extends BaseQueryIT {
       conn = DriverManager.getConnection(getUrl(), props);
       conn.createStatement()
               .execute(
-                      "create table date_table (ts date primary key)");
+                      "create table " + tName + " (ts date primary key)");
       conn.close();
 
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 30));
       conn = DriverManager.getConnection(getUrl(), props);
-      stmt = conn.prepareStatement("upsert into date_table values (?)");
+      stmt = conn.prepareStatement("upsert into " + tName + " values (?)");
       stmt.setDate(1, new Date(1995 - 1900, 4, 2));
       stmt.execute();
       conn.commit();
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 60));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts FROM date_table");
+      rs = conn.createStatement().executeQuery("SELECT ts FROM " + tName);
       assertTrue(rs.next());
       assertEquals("1995-05-02",rs.getDate(1).toString());
       props.setProperty(PhoenixRuntime.CURRENT_SCN_ATTRIB, Long.toString(ts + 70));
       conn = DriverManager.getConnection(getUrl(), props);
-      rs = conn.createStatement().executeQuery("SELECT ts - 1 FROM date_table");
+      rs = conn.createStatement().executeQuery("SELECT ts - 1 FROM " + tName);
       assertTrue(rs.next());
       assertEquals("1995-05-01",rs.getDate(1).toString());
     }

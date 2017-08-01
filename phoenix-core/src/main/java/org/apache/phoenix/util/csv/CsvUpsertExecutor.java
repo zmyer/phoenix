@@ -23,14 +23,22 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.util.List;
 import java.util.Properties;
+
 import javax.annotation.Nullable;
 
 import org.apache.commons.csv.CSVRecord;
+import org.apache.hadoop.hbase.util.Base64;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.phoenix.expression.function.EncodeFormat;
 import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.query.QueryServicesOptions;
+import org.apache.phoenix.schema.IllegalDataException;
+import org.apache.phoenix.schema.types.PBinary;
 import org.apache.phoenix.schema.types.PBoolean;
 import org.apache.phoenix.schema.types.PDataType;
+import org.apache.phoenix.schema.types.PDataType.PDataCodec;
 import org.apache.phoenix.schema.types.PTimestamp;
+import org.apache.phoenix.schema.types.PVarbinary;
 import org.apache.phoenix.util.ColumnInfo;
 import org.apache.phoenix.util.DateUtil;
 import org.apache.phoenix.util.UpsertExecutor;
@@ -112,7 +120,9 @@ public class CsvUpsertExecutor extends UpsertExecutor<CSVRecord, String> {
     static class SimpleDatatypeConversionFunction implements Function<String, Object> {
 
         private final PDataType dataType;
+        private final PDataCodec codec;
         private final DateUtil.DateTimeParser dateTimeParser;
+        private final String binaryEncoding;
 
         SimpleDatatypeConversionFunction(PDataType dataType, Connection conn) {
             Properties props;
@@ -122,7 +132,9 @@ public class CsvUpsertExecutor extends UpsertExecutor<CSVRecord, String> {
                 throw new RuntimeException(e);
             }
             this.dataType = dataType;
+            PDataCodec codec = dataType.getCodec();
             if(dataType.isCoercibleTo(PTimestamp.INSTANCE)) {
+                codec = DateUtil.getCodecFor(dataType);
                 // TODO: move to DateUtil
                 String dateFormat;
                 int dateSqlType = dataType.getResultSetSqlType();
@@ -142,6 +154,9 @@ public class CsvUpsertExecutor extends UpsertExecutor<CSVRecord, String> {
             } else {
                 this.dateTimeParser = null;
             }
+            this.codec = codec;
+            this.binaryEncoding = props.getProperty(QueryServices.UPLOAD_BINARY_DATA_TYPE_ENCODING,
+                            QueryServicesOptions.DEFAULT_UPLOAD_BINARY_DATA_TYPE_ENCODING);
         }
 
         @Nullable
@@ -153,7 +168,7 @@ public class CsvUpsertExecutor extends UpsertExecutor<CSVRecord, String> {
             if (dateTimeParser != null) {
                 long epochTime = dateTimeParser.parseDateTime(input);
                 byte[] byteValue = new byte[dataType.getByteSize()];
-                dataType.getCodec().encodeLong(epochTime, byteValue, 0);
+                codec.encodeLong(epochTime, byteValue, 0);
                 return dataType.toObject(byteValue);
             } else if (dataType == PBoolean.INSTANCE) {
                 switch (input.toLowerCase()) {
@@ -169,6 +184,22 @@ public class CsvUpsertExecutor extends UpsertExecutor<CSVRecord, String> {
                         throw new RuntimeException("Invalid boolean value: '" + input
                                 + "', must be one of ['true','t','1','false','f','0']");
                 }
+            }else if (dataType == PVarbinary.INSTANCE || dataType == PBinary.INSTANCE){
+                EncodeFormat format = EncodeFormat.valueOf(binaryEncoding.toUpperCase());
+                Object object = null;
+                switch (format) {
+                    case BASE64:
+                        object = Base64.decode(input);
+                        if (object == null) { throw new IllegalDataException(
+                                "Input: [" + input + "]  is not base64 encoded"); }
+                        break;
+                    case ASCII:
+                        object = Bytes.toBytes(input);
+                        break;
+                    default:
+                        throw new IllegalDataException("Unsupported encoding \"" + binaryEncoding + "\"");
+                }
+                return object;
             }
             return dataType.toObject(input);
         }

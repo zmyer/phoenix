@@ -39,6 +39,7 @@ import org.apache.phoenix.query.QueryServices;
 import org.apache.phoenix.schema.MetaDataClient;
 import org.apache.phoenix.schema.PColumn;
 import org.apache.phoenix.schema.PTable;
+import org.apache.phoenix.schema.PTableType;
 import org.apache.phoenix.schema.TableRef;
 import org.apache.phoenix.util.DateUtil;
 import org.apache.phoenix.util.NumberUtil;
@@ -122,7 +123,7 @@ public class StatementContext {
         this.timeFormatter = DateUtil.getTimeFormatter(timeFormat);
         this.timestampFormat = props.get(QueryServices.TIMESTAMP_FORMAT_ATTRIB, DateUtil.DEFAULT_TIMESTAMP_FORMAT);
         this.timestampFormatter = DateUtil.getTimestampFormatter(timestampFormat);
-        this.dateFormatTimeZone = TimeZone.getTimeZone(props.get(QueryServices.DATE_FORMAT_TIMEZONE_ATTRIB,
+        this.dateFormatTimeZone = DateUtil.getTimeZone(props.get(QueryServices.DATE_FORMAT_TIMEZONE_ATTRIB,
                 DateUtil.DEFAULT_TIME_ZONE_ID));
         this.numberFormat = props.get(QueryServices.NUMBER_FORMAT_ATTRIB, NumberUtil.DEFAULT_NUMBER_FORMAT);
         this.tempPtr = new ImmutableBytesWritable();
@@ -251,9 +252,11 @@ public class StatementContext {
     }
 
     public long getCurrentTime() throws SQLException {
-        long ts = this.getCurrentTable().getTimeStamp();
+        long ts = this.getCurrentTable().getCurrentTime();
         // if the table is transactional then it is only resolved once per query, so we can't use the table timestamp
-        if (!this.getCurrentTable().getTable().isTransactional() && ts != QueryConstants.UNSET_TIMESTAMP) {
+        if (this.getCurrentTable().getTable().getType() != PTableType.PROJECTED && !this
+                .getCurrentTable().getTable().isTransactional() && ts != QueryConstants
+                .UNSET_TIMESTAMP) {
             return ts;
         }
         if (currentTime != QueryConstants.UNSET_TIMESTAMP) {
@@ -276,7 +279,7 @@ public class StatementContext {
         return sequences;
     }
 
-    public void addWhereCoditionColumn(byte[] cf, byte[] q) {
+    public void addWhereConditionColumn(byte[] cf, byte[] q) {
         whereConditionColumns.add(new Pair<byte[], byte[]>(cf, q));
     }
 

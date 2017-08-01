@@ -23,51 +23,50 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 
 import org.apache.phoenix.query.QueryServices;
-import org.apache.phoenix.util.ReadOnlyProps;
+import org.apache.phoenix.util.PropertiesUtil;
+import org.apache.phoenix.util.QueryUtil;
+import org.apache.phoenix.util.StringUtil;
+import org.apache.phoenix.util.TestUtil;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.google.common.collect.Maps;
 import com.google.common.io.Files;
 
-
-
-public class SpooledTmpFileDeleteIT extends BaseHBaseManagedTimeIT {
-	
-    private Connection conn = null;
-    private Properties props = null;
+public class SpooledTmpFileDeleteIT extends ParallelStatsDisabledIT {
+	private static final String PRINCIPAL = "noRenewLease";
     private File spoolDir;
+	private String tableName;
 
-    @BeforeClass
-    @Shadower(classBeingShadowed = BaseClientManagedTimeIT.class)
-    public static void doSetup() throws Exception {
-        Map<String, String> props = Maps.newHashMapWithExpectedSize(1);
-        // disable renewing leases. This will force spooling to happen.
-        props.put(QueryServices.RENEW_LEASE_ENABLED, Boolean.toString(false));
-        // Must update config before starting server
-        setUpTestDriver(new ReadOnlyProps(props.entrySet().iterator()));
-    }
-	
-	@Before 
-	public void setup() throws SQLException {
-		props = new Properties();
-		spoolDir =  Files.createTempDir();
-		props.put(QueryServices.SPOOL_DIRECTORY, spoolDir.getPath());
+    private Connection getConnection() throws Exception {
+        Properties props = PropertiesUtil.deepCopy(TestUtil.TEST_PROPERTIES);
+        props.setProperty(QueryServices.SPOOL_DIRECTORY, spoolDir.getPath());
         props.setProperty(QueryServices.SPOOL_THRESHOLD_BYTES_ATTRIB, Integer.toString(1));
-        conn = DriverManager.getConnection(getUrl(), props);
-		Statement stmt = conn.createStatement();
-		stmt.execute("CREATE TABLE test (ID varchar NOT NULL PRIMARY KEY) SPLIT ON ('EA','EZ')");
-		stmt.execute("UPSERT INTO test VALUES ('AA')");
-		stmt.execute("UPSERT INTO test VALUES ('EB')");    
-		stmt.execute("UPSERT INTO test VALUES ('FA')");    
-		stmt.close();
-		conn.commit();
+        props.setProperty(QueryServices.RENEW_LEASE_ENABLED, Boolean.toString(false));
+        // Ensures round robin off so that spooling is used.
+        // TODO: review with Samarth - should a Noop iterator be used if pacing is not possible?
+        props.setProperty(QueryServices.FORCE_ROW_KEY_ORDER_ATTRIB, Boolean.toString(true));
+        props.setProperty(QueryServices.EXTRA_JDBC_ARGUMENTS_ATTRIB, StringUtil.EMPTY_STRING);
+        String url = QueryUtil.getConnectionUrl(props, config, PRINCIPAL);
+        return DriverManager.getConnection(url, props);
+    }
+    
+	@Before 
+	public void setup() throws Exception {
+		tableName = generateUniqueName();
+		spoolDir =  Files.createTempDir();
+        try (Connection conn = getConnection()) {
+    		Statement stmt = conn.createStatement();
+    		stmt.execute("CREATE TABLE " + tableName + " (ID varchar NOT NULL PRIMARY KEY) SPLIT ON ('EA','EZ')");
+    		stmt.execute("UPSERT INTO " + tableName + " VALUES ('AA')");
+    		stmt.execute("UPSERT INTO " + tableName + " VALUES ('EB')");
+    		stmt.execute("UPSERT INTO " + tableName + " VALUES ('FA')");
+    		stmt.close();
+    		conn.commit();
+        }
 	}
 	
 	@After
@@ -98,7 +97,8 @@ public class SpooledTmpFileDeleteIT extends BaseHBaseManagedTimeIT {
 			file.delete();
 		}
 
-		String query = "select * from TEST";
+		String query = "select * from " + tableName;
+		Connection conn = getConnection();
 		Statement statement = conn.createStatement();
 		ResultSet rs = statement.executeQuery(query);
 		assertTrue(rs.next());
@@ -109,7 +109,7 @@ public class SpooledTmpFileDeleteIT extends BaseHBaseManagedTimeIT {
 			fileNames.add(file.getName());
 		}
 
-		String preparedQuery = "select * from test where id = ?";
+		String preparedQuery = "select * from " + tableName + " where id = ?";
 		PreparedStatement pstmt = conn.prepareStatement(preparedQuery);
 		pstmt.setString(1, "EB");
 		ResultSet prs = pstmt.executeQuery(preparedQuery);
@@ -120,15 +120,15 @@ public class SpooledTmpFileDeleteIT extends BaseHBaseManagedTimeIT {
 			fileNames.add(file.getName());
 		}
 
-		Connection conn2 = DriverManager.getConnection(getUrl(), props);
-		String query2 = "select * from TEST";
+		Connection conn2 = getConnection();
+		String query2 = "select * from " + tableName + "";
 		Statement statement2 = conn2.createStatement();
 		ResultSet rs2 = statement2.executeQuery(query2);
 		assertTrue(rs2.next());
 		files = dir.listFiles(fnameFilter);
 		assertTrue(files.length > 0);
 
-		String preparedQuery2 = "select * from test where id = ?";
+		String preparedQuery2 = "select * from " + tableName + " where id = ?";
 		PreparedStatement pstmt2 = conn2.prepareStatement(preparedQuery2);
 		pstmt2.setString(1, "EB");
 		ResultSet prs2 = pstmt2.executeQuery(preparedQuery2);

@@ -69,11 +69,13 @@ public class PhoenixEmbeddedDriverTest {
             "jdbc:phoenix:v1,v2,v3:/hbase:user/principal:/user.keytab;test=false",
             "jdbc:phoenix:v1,v2,v3:LongRunningQueries;test=false",
             "jdbc:phoenix:v1,v2,v3:345:LongRunningQueries;test=false",
+            "jdbc:phoenix:localhost:1234:user:C:\\user.keytab",
+            "jdbc:phoenix:v1,v2,v3:345:/hbase:user1:C:\\Documents and Settings\\user1\\user1.keytab;test=false",
         };
         ConnectionInfo[] infos = new ConnectionInfo[] {
-            new ConnectionInfo(null,null,null),
-            new ConnectionInfo(null,null,null),
-            new ConnectionInfo(null,null,null),
+            new ConnectionInfo("localhost",2181,"/hbase"),
+            new ConnectionInfo("localhost",2181,"/hbase"),
+            new ConnectionInfo("localhost",2181,"/hbase"),
             new ConnectionInfo(null,null,null),
             new ConnectionInfo("localhost",null,null),
             new ConnectionInfo("localhost",null,null),
@@ -106,6 +108,8 @@ public class PhoenixEmbeddedDriverTest {
             new ConnectionInfo("v1,v2,v3",null,"/hbase","user/principal", "/user.keytab" ),
             new ConnectionInfo("v1,v2,v3",null,null,"LongRunningQueries", null ),
             new ConnectionInfo("v1,v2,v3",345,null,"LongRunningQueries", null ),
+            new ConnectionInfo("localhost", 1234, null, "user", "C:\\user.keytab"),
+            new ConnectionInfo("v1,v2,v3", 345, "/hbase", "user1", "C:\\Documents and Settings\\user1\\user1.keytab"),
         };
         assertEquals(urls.length,infos.length);
         for (int i = 0; i < urls.length; i++) {
@@ -153,5 +157,34 @@ public class PhoenixEmbeddedDriverTest {
         assertTrue(driver.acceptsURL("jdbc:phoenix:localhost:123;untest=true"));
         assertTrue(driver.acceptsURL("jdbc:phoenix:localhost:123;untest=true;foo=bar"));
         DriverManager.deregisterDriver(driver);
+    }
+
+    @Test
+    public void testPrincipalsMatching() throws Exception {
+        assertTrue(ConnectionInfo.isSameName("user@EXAMPLE.COM", "user@EXAMPLE.COM"));
+        assertTrue(ConnectionInfo.isSameName("user/localhost@EXAMPLE.COM", "user/localhost@EXAMPLE.COM"));
+        // the user provided name might have a _HOST in it, which should be replaced by the hostname
+        assertTrue(ConnectionInfo.isSameName("user/localhost@EXAMPLE.COM", "user/_HOST@EXAMPLE.COM", "localhost"));
+        assertFalse(ConnectionInfo.isSameName("user/foobar@EXAMPLE.COM", "user/_HOST@EXAMPLE.COM", "localhost"));
+        assertFalse(ConnectionInfo.isSameName("user@EXAMPLE.COM", "user/_HOST@EXAMPLE.COM", "localhost"));
+        assertFalse(ConnectionInfo.isSameName("user@FOO", "user@BAR"));
+
+        // NB: We _should_ be able to provide our or krb5.conf for this test to use, but this doesn't
+        // seem to want to play nicely with the rest of the tests. Instead, we can just provide a default realm
+        // by hand.
+
+        // For an implied default realm, we should also match that. Users might provide a shortname
+        // whereas UGI would provide the "full" name.
+        assertTrue(ConnectionInfo.isSameName("user@APACHE.ORG", "user", null, "APACHE.ORG"));
+        assertTrue(ConnectionInfo.isSameName("user/localhost@APACHE.ORG", "user/localhost", null, "APACHE.ORG"));
+        assertFalse(ConnectionInfo.isSameName("user@APACHE.NET", "user", null, "APACHE.ORG"));
+        assertFalse(ConnectionInfo.isSameName("user/localhost@APACHE.NET", "user/localhost", null, "APACHE.ORG"));
+        assertTrue(ConnectionInfo.isSameName("user@APACHE.ORG", "user@APACHE.ORG", null, "APACHE.ORG"));
+        assertTrue(ConnectionInfo.isSameName("user/localhost@APACHE.ORG", "user/localhost@APACHE.ORG", null, "APACHE.ORG"));
+
+        assertTrue(ConnectionInfo.isSameName("user/localhost@APACHE.ORG", "user/_HOST", "localhost", "APACHE.ORG"));
+        assertTrue(ConnectionInfo.isSameName("user/foobar@APACHE.ORG", "user/_HOST", "foobar", "APACHE.ORG"));
+        assertFalse(ConnectionInfo.isSameName("user/localhost@APACHE.NET", "user/_HOST", "localhost", "APACHE.ORG"));
+        assertFalse(ConnectionInfo.isSameName("user/foobar@APACHE.NET", "user/_HOST", "foobar", "APACHE.ORG"));
     }
 }

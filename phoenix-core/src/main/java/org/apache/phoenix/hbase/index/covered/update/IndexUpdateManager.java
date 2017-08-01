@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.TreeSet;
 
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.client.Delete;
@@ -30,6 +31,7 @@ import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
+import org.apache.phoenix.hbase.index.covered.IndexMetaData;
 import org.apache.phoenix.hbase.index.util.ImmutableBytesPtr;
 
 import com.google.common.collect.Lists;
@@ -98,6 +100,12 @@ public class IndexUpdateManager {
 
   protected final Map<ImmutableBytesPtr, Collection<Mutation>> map =
       new HashMap<ImmutableBytesPtr, Collection<Mutation>>();
+  private IndexMetaData indexMetaData;
+
+  public IndexUpdateManager(IndexMetaData indexMetaData) {
+    this.indexMetaData = indexMetaData;
+
+  }
 
   /**
    * Add an index update. Keeps the latest {@link Put} for a given timestamp
@@ -109,10 +117,15 @@ public class IndexUpdateManager {
     ImmutableBytesPtr key = new ImmutableBytesPtr(tableName);
     Collection<Mutation> updates = map.get(key);
     if (updates == null) {
-      updates = new SortedCollection<Mutation>(COMPARATOR);
+      updates = new TreeSet<Mutation>(COMPARATOR);
       map.put(key, updates);
     }
-    fixUpCurrentUpdates(updates, m);
+    if (indexMetaData.ignoreNewerMutations()) {
+      // if we're replaying mutations, we don't need to worry about out-of-order updates
+      updates.add(m);
+    } else {
+      fixUpCurrentUpdates(updates, m);
+    }
   }
 
   /**
@@ -167,9 +180,12 @@ public class IndexUpdateManager {
         break;
       }
     }
-    
-    updates.remove(toRemove);
-    updates.add(pendingMutation);
+    if (toRemove != null) {
+        updates.remove(toRemove);
+    }
+    if (pendingMutation != null) {
+        updates.add(pendingMutation);
+    }
   }
 
   private void markMutationForRemoval(Mutation m) {
@@ -209,7 +225,7 @@ public class IndexUpdateManager {
   public String toString() {
     StringBuffer sb = new StringBuffer("Pending Index Updates:\n");
     for (Entry<ImmutableBytesPtr, Collection<Mutation>> entry : map.entrySet()) {
-      String tableName = Bytes.toString(entry.getKey().get());
+      String tableName = Bytes.toStringBinary(entry.getKey().get());
       sb.append("   Table: '" + tableName + "'\n");
       for (Mutation m : entry.getValue()) {
         sb.append("\t");
@@ -218,7 +234,7 @@ public class IndexUpdateManager {
         }
         sb.append(m.getClass().getSimpleName() + ":"
             + ((m instanceof Put) ? m.getTimeStamp() + " " : ""));
-        sb.append(" row=" + Bytes.toString(m.getRow()));
+        sb.append(" row=" + Bytes.toStringBinary(m.getRow()));
         sb.append("\n");
         if (m.getFamilyCellMap().isEmpty()) {
           sb.append("\t\t=== EMPTY ===\n");
